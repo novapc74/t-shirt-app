@@ -4,8 +4,16 @@ namespace App\Http\Resources;
 
 use Illuminate\Http\Resources\Json\JsonResource;
 
+/**
+ * @property mixed $id
+ * @property mixed $name
+ * @property mixed $slug
+ * @property mixed $category
+ * @property mixed $variants
+ */
 class ProductResource extends JsonResource
 {
+
     public function toArray($request): array
     {
         $interactiveProps = ['color', 'size', 'gender', 'head_size'];
@@ -14,9 +22,7 @@ class ProductResource extends JsonResource
             'id' => $this->id,
             'name' => $this->name,
             'slug' => $this->slug,
-            // Добавляем название категории самого товара
             'category_name' => $this->category->name,
-
             'min_price' => (float)$this->variants->flatMap->prices->min('amount'),
 
             'variants' => $this->variants->map(fn($v) => [
