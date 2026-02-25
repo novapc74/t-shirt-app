@@ -10,10 +10,11 @@
             </p>
         </div>
 
-        <div class="flex-1 space-y-4 mb-6">
+        <div class="flex-1 space-y-4 mb-2">
             <div v-for="(options, groupName) in product.grouped_specs" :key="groupName" class="flex flex-col gap-2">
                 <span class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{{ groupName }}</span>
-                <div class="flex flex-wrap gap-1.5">
+
+                <div class="flex flex-wrap gap-1.5 items-center">
                     <button
                         v-for="opt in options"
                         :key="opt.value"
@@ -30,14 +31,35 @@
                     >
                         {{ opt.value }}
                     </button>
+
+                    <button
+                        v-if="selection[groupName]"
+                        @click="resetGroup(groupName)"
+                        class="p-1.5 text-gray-300 hover:text-red-500 transition-colors rounded-md"
+                    >
+                        <svg xmlns="http://www.w3.org" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
                 </div>
+            </div>
+
+            <!-- БЛОК СБРОСА: закругление 4px, тонкий контур, уменьшенная высота h-6 -->
+            <div class="h-6 flex justify-end items-center mt-3">
+                <button
+                    v-if="Object.keys(selection).length > 1"
+                    @click="resetAll"
+                    class="px-2 py-1.5 text-[9px] font-black uppercase tracking-widest text-red-600 border border-red-800/40 rounded-[4px] hover:bg-red-600 hover:text-white transition-all active:scale-95 flex items-center gap-1"
+                >
+                    сброс
+                </button>
             </div>
         </div>
 
-        <div class="mb-4 h-5">
+        <div class="mb-3 h-4">
             <div v-if="currentVariant" class="flex items-center gap-2">
-                <span :class="['w-2 h-2 rounded-full', currentVariant.stock > 0 ? 'bg-green-500 animate-pulse' : 'bg-red-500']"></span>
-                <span class="text-[10px] text-gray-500 uppercase font-bold tracking-tight">
+                <span :class="['w-1.5 h-1.5 rounded-full', currentVariant.stock > 0 ? 'bg-green-500 animate-pulse' : 'bg-red-500']"></span>
+                <span class="text-[9px] text-gray-500 uppercase font-bold tracking-tight">
                     {{ currentVariant.stock > 0 ? `В наличии: ${currentVariant.stock} шт.` : 'Нет на складе' }}
                 </span>
             </div>
@@ -46,7 +68,7 @@
         <button
             @click="handleAddToCart"
             :disabled="!currentVariant || currentVariant.stock <= 0"
-            class="w-full bg-gray-900 text-white text-center py-3.5 rounded-xl font-black uppercase text-xs tracking-widest hover:bg-indigo-600 active:scale-95 transition-all disabled:bg-gray-100 disabled:text-gray-300 shadow-lg shadow-gray-200"
+            class="w-full bg-green-700 text-white text-center py-3.5 rounded-xl font-black uppercase text-xs tracking-widest hover:shadow-gray-400 active:scale-95 transition-all disabled:bg-gray-100 disabled:text-gray-400 shadow-lg shadow-gray-200"
         >
             {{ currentVariant ? (currentVariant.stock > 0 ? 'В корзину' : 'Нет в наличии') : 'Выберите опции' }}
         </button>
@@ -78,7 +100,6 @@ const autoSelect = () => {
     Object.entries(props.product.grouped_specs).forEach(([groupName, options]) => {
         if (!selection.value[groupName]) {
             const possible = options.filter(opt => isOptionPossible(groupName, opt.value));
-            // ИСПРАВЛЕНО: берем первый элемент массива найденных опций
             if (possible.length === 1) {
                 selection.value[groupName] = possible[0].value;
                 changed = true;
@@ -102,9 +123,19 @@ const syncWithSidebar = () => {
     autoSelect();
 }
 
+function resetGroup(groupName) {
+    delete selection.value[groupName];
+    autoSelect();
+}
+
+function resetAll() {
+    selection.value = {};
+    autoSelect();
+}
+
 function selectOption(group, value) {
     if (selection.value[group] === value) {
-        delete selection.value[group];
+        resetGroup(group);
     } else {
         selection.value[group] = value;
         Object.keys(selection.value).forEach(g => {

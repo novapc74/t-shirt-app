@@ -38,6 +38,10 @@ class PriceType extends Model
     use HasFactory;
     use HasSlug;
 
+    public const RETAIL = 1;
+    public const WHOLESALE = 2;
+    public const PROMOTION = 3;
+
     public function getSlugOptions(): SlugOptions
     {
         return SlugOptions::create()

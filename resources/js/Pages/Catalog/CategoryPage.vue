@@ -7,6 +7,35 @@
                 <!-- БЛОК ЦЕНЫ -->
                 <div class="mb-6 border-b pb-6">
                     <h3 class="font-bold mb-3 uppercase text-[10px] text-gray-400 tracking-widest">Цена (₽)</h3>
+
+                    <!-- Визуальный слайдер -->
+                    <div class="relative h-1 w-full bg-gray-200 rounded-full mb-6 mt-4">
+                        <div
+                            class="absolute h-full bg-indigo-600 rounded-full"
+                            :style="{
+                                left: `${((minPrice || price_range.min) - price_range.min) / (price_range.max - price_range.min) * 100}%`,
+                                right: `${100 - ((maxPrice || price_range.max) - price_range.min) / (price_range.max - price_range.min) * 100}%`
+                            }"
+                        ></div>
+                        <input
+                            type="range"
+                            :min="price_range.min"
+                            :max="price_range.max"
+                            v-model.number="minPrice"
+                            @change="updateFilters"
+                            class="absolute w-full -top-1.5 h-4 bg-transparent appearance-none pointer-events-none cursor-pointer range-slider"
+                        >
+                        <input
+                            type="range"
+                            :min="price_range.min"
+                            :max="price_range.max"
+                            v-model.number="maxPrice"
+                            @change="updateFilters"
+                            class="absolute w-full -top-1.5 h-4 bg-transparent appearance-none pointer-events-none cursor-pointer range-slider"
+                        >
+                    </div>
+
+                    <!-- Поля ввода -->
                     <div class="flex items-center gap-2 mb-4">
                         <input
                             type="number"
@@ -32,7 +61,6 @@
                         {{ group.name }} <span v-if="group.unit">({{ group.unit }})</span>
                     </h3>
                     <div v-for="option in group.options" :key="option.value" class="flex items-center mb-2">
-                        <!-- Если опция недоступна, мы добавляем ей спец-стили и блокируем клик -->
                         <label :class="[
                             'flex items-center cursor-pointer text-sm transition-all',
                             option.is_available ? 'text-gray-800 hover:text-indigo-600' : 'text-gray-300 cursor-not-allowed opacity-50'
@@ -86,15 +114,14 @@ const props = defineProps({
     price_range: Object
 })
 
-// 1. Инициализация выбранных фильтров
+// 1. Инициализация
 const selectedFilters = ref(props.active_filters || {})
 
-// Цены
 const urlParams = new URLSearchParams(window.location.search)
-const minPrice = ref(urlParams.get('min_price') || null)
-const maxPrice = ref(urlParams.get('max_price') || null)
+// Важно: приводим к числу для корректной работы слайдера
+const minPrice = ref(urlParams.get('min_price') ? Number(urlParams.get('min_price')) : props.price_range.min)
+const maxPrice = ref(urlParams.get('max_price') ? Number(urlParams.get('max_price')) : props.price_range.max)
 
-// Функция подготовки структуры объекта фильтров
 const sync = () => {
     props.filters.forEach(group => {
         if (!selectedFilters.value[group.slug]) {
@@ -105,38 +132,43 @@ const sync = () => {
 
 onMounted(sync);
 
-// 2. СЛЕЖКА ЗА ОБНОВЛЕНИЕМ ДАННЫХ (Главная магия самоочистки)
+// 2. Валидация цен (чтобы min не стал больше max)
+watch([minPrice, maxPrice], ([newMin, newMax]) => {
+    if (newMin > newMax) {
+        minPrice.value = newMax
+    }
+    if (newMax < newMin) {
+        maxPrice.value = newMin
+    }
+})
+
+// Слежка за фильтрами (самоочистка)
 watch(() => props.filters, (newFilters) => {
     let needsUpdate = false;
-
     newFilters.forEach(group => {
         const slug = group.slug;
         if (selectedFilters.value[slug] && selectedFilters.value[slug].length > 0) {
-            // Создаем список только ТЕХ значений, которые бэкенд пометил как доступные
             const availableValues = group.options
                 .filter(opt => opt.is_available)
                 .map(opt => opt.value);
 
-            // Оставляем в выбранных только реально доступные
             const originalLength = selectedFilters.value[slug].length;
             selectedFilters.value[slug] = selectedFilters.value[slug].filter(val =>
                 availableValues.includes(val)
             );
 
-            // Если хоть одна галочка "улетела" — значит данные изменились
             if (selectedFilters.value[slug].length !== originalLength) {
                 needsUpdate = true;
             }
         }
     });
 
-    // Если мы удалили "битые" галочки, нужно сразу обновить список товаров
     if (needsUpdate) {
         updateFilters();
     }
 }, { deep: true });
 
-// 3. ОТПРАВКА ЗАПРОСА
+// 3. Функции
 function updateFilters() {
     router.get(window.location.pathname, {
         filters: selectedFilters.value,
@@ -146,14 +178,24 @@ function updateFilters() {
         preserveState: true,
         preserveScroll: true,
         replace: true,
-        only: ['products', 'filters']
+        only: ['products', 'filters', 'price_range']
     })
 }
 
 function resetFilters() {
-    minPrice.value = null
-    maxPrice.value = null
+    minPrice.value = props.price_range.min
+    maxPrice.value = props.price_range.max
     selectedFilters.value = {}
     router.get(window.location.pathname)
 }
 </script>
+
+<style scoped>
+/* Стили для того, чтобы два ползунка накладывались друг на друга */
+.range-slider::-webkit-slider-thumb {
+    @apply appearance-none h-4 w-4 rounded-full bg-white border-2 border-indigo-600 pointer-events-auto shadow-sm;
+}
+.range-slider::-moz-range-thumb {
+    @apply appearance-none h-4 w-4 rounded-full bg-white border-2 border-indigo-600 pointer-events-auto shadow-sm;
+}
+</style>
