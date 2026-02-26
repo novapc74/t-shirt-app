@@ -101,11 +101,13 @@ class Product extends Model
         return $this->hasMany(ProductVariant::class);
     }
 
-    /**
-     * Связь с типами продукции (М2М)
-     */
-    public function productTypes(): BelongsToMany
+    public function productType(): BelongsTo
     {
-        return $this->belongsToMany(ProductType::class);
+        return $this->belongsTo(ProductType::class);
+    }
+
+    public function brand(): BelongsTo
+    {
+        return $this->belongsTo(Brand::class);
     }
 }

@@ -3,20 +3,18 @@
 namespace App\Models;
 
 use Closure;
-use Spatie\Sluggable\HasSlug;
-use Spatie\Sluggable\SlugOptions;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Spatie\Sluggable\HasSlug;
+use Spatie\Sluggable\SlugOptions;
 
 /**
  * @method static whereHas(string $string, Closure $param)
- * @method static pluck(string $string, string $string1)
- * @method static updateOrCreate(array $array)
  */
-class ProductType extends Model
+class Brand extends Model
 {
-    use HasFactory;
+    use hasFactory;
     use HasSlug;
 
     protected $fillable = [

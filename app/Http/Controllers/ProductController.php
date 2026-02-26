@@ -31,9 +31,11 @@ class ProductController extends Controller
             'category' => $category->name,
             'price_range' => $data['price_range'],
             'filters' => $data['filters'],
+            'brands' => $data['brands'],
             'product_types' => $data['product_types'],
             'products' => ProductResource::collection($data['products']),
             'active_filters' => (object)$params->filters,
+            'active_brands' => $params->brands,
             'active_types' => $params->productTypes,
             'current_sort' => $params->sort
         ]);

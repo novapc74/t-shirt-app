@@ -4,274 +4,227 @@ namespace App\Services\Catalog;
 
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\{Cache, DB};
-use App\Models\{PriceType, Product, ProductType, Property, Category};
+use App\Models\{Product, Property, Category, ProductType, Brand};
 use App\Services\Catalog\DTO\ProductFilterParams;
 
 class CatalogService
 {
-    /**
-     * Основной метод получения данных для каталога
-     *
-     * @param Category $category
-     * @param ProductFilterParams $params
-     * @return array|null
-     */
     public function getCategoryCatalog(Category $category, ProductFilterParams $params): ?array
     {
         // 1. Базовые ID товаров категории в наличии
-        $initialProductIds = Cache::remember("category_base_ids_{$category->id}", now()->addMinutes(10), function () use ($category) {
+        $initialProductIds = Cache::remember("cat_base_ids_{$category->id}", now()->addMinutes(10), function () use ($category) {
             return Product::where('category_id', $category->id)
                 ->whereHas('variants.stocks', fn($q) => $q->where('quantity', '>', 0))
                 ->pluck('id');
         });
 
-        if ($initialProductIds->isEmpty()) {
-            return null;
-        }
-
-        // --- НОВОЕ: Фильтрация по типам товаров (сужаем baseProductIds) ---
-        $baseProductIds = $initialProductIds;
-        if (!empty($params->productTypes)) {
-            $baseProductIds = DB::table('product_product_type')
-                ->whereIn('product_id', $initialProductIds)
-                ->whereIn('product_type_id', function ($q) use ($params) {
-                    $q->select('id')->from('product_types')->whereIn('slug', $params->productTypes);
-                })
-                ->pluck('product_id');
-        }
-
-        if ($baseProductIds->isEmpty()) {
-            return null; // Если после выбора типа ничего не осталось
-        }
+        if ($initialProductIds->isEmpty()) return null;
 
         // 2. Метаданные свойств
         $filterMeta = $this->getFilterMeta($category->id);
 
-        // 3. Карта доступности (UNION ALL запрос)
-        $availabilityMap = $this->calculateAvailability($baseProductIds, $filterMeta, $params);
+        // 3. УМНЫЙ РАСЧЕТ ДОСТУПНОСТИ (UNION ALL)
+        $availabilityMap = $this->calculateAvailability($initialProductIds, $filterMeta, $params);
 
-        // 4. Поиск финальных Variant IDs для выдачи
+        // 4. Фильтрация базовых ID продуктов (для финальной выдачи товаров)
+        $query = Product::whereIn('id', $initialProductIds);
+        if (!empty($params->productTypes)) {
+            $query->whereIn('product_type_id', function ($q) use ($params) {
+                $q->select('id')->from('product_types')->whereIn('slug', $params->productTypes);
+            });
+        }
+        if (!empty($params->brands)) {
+            $query->whereIn('brand_id', function ($q) use ($params) {
+                $q->select('id')->from('brands')->whereIn('slug', $params->brands);
+            });
+        }
+        $baseProductIds = $query->pluck('id');
+
+        // 5. Поиск финальных Variant IDs для выдачи
         $finalVariantIds = $this->getFinalVariantIds($baseProductIds, $params);
 
-        // 5. Загрузка товаров
+        // 6. Загрузка товаров
         $products = Product::whereIn('id', function ($q) use ($finalVariantIds) {
             $q->select('product_id')->from('product_variants')->whereIn('id', $finalVariantIds);
         })
             ->with([
-                'variants' => fn($q) => $q->whereIn('id', $finalVariantIds)
-                    ->with(['properties.property.measure', 'prices', 'stocks'])
+                'brand',
+                'productType',
+                'variants' => function ($q) use ($finalVariantIds) {
+                    $q->whereIn('id', $finalVariantIds)
+                        ->with([
+                            'properties' => function($pq) {
+                                // Сортируем свойства внутри каждого варианта
+                                $pq->orderBy('priority', 'asc');
+                            },
+                            'properties.property.measure',
+                            'prices',
+                            'stocks'
+                        ]);
+                }
             ])
             ->latest()
-            ->simplePaginate(12)
-            ->withQueryString();
+            ->simplePaginate(12);
 
         return [
             'price_range'   => $this->getPriceRange($category->id),
             'filters'       => $this->formatSmartFilters($filterMeta, $availabilityMap),
-            'product_types' => $this->getProductTypes($category->id, $initialProductIds, $params), // НОВОЕ
+            'product_types' => $this->getProductTypes($category->id, $initialProductIds, $params, $availabilityMap),
+            'brands'        => $this->getBrands($category->id, $initialProductIds, $params, $availabilityMap),
             'products'      => $products
         ];
     }
 
-
-    /**
-     * Поиск ID вариантов, которые подходят под текущие фильтры
-     *
-     * @param $baseProductIds
-     * @param ProductFilterParams $params
-     * @return Collection
-     */
-    private function getFinalVariantIds($baseProductIds, ProductFilterParams $params): Collection
+    private function calculateAvailability($initialProductIds, $filterMeta, ProductFilterParams $params): Collection
     {
-        $activeFilters = collect($params->filters)
-            ->map(fn($v) => collect($v)->flatten()->filter()->toArray())
-            ->filter();
+        $unionQueries = [];
 
+        // А. Доступность ТИПОВ
+        $unionQueries[] = $this->buildAvailabilitySubQuery($initialProductIds, $params, 'type');
+        // Б. Доступность БРЕНДОВ
+        $unionQueries[] = $this->buildAvailabilitySubQuery($initialProductIds, $params, 'brand');
+        // В. Доступность СВОЙСТВ
+        foreach ($filterMeta as $prop) {
+            $unionQueries[] = $this->buildAvailabilitySubQuery($initialProductIds, $params, 'property', $prop->id);
+        }
+
+        $firstQuery = array_shift($unionQueries);
+        foreach ($unionQueries as $query) $firstQuery->unionAll($query);
+
+        return $firstQuery->get()
+            ->groupBy('group_key')
+            ->map(fn($group) => $group->pluck('val')->map(fn($v) => (string)$v)->unique()->toArray());
+    }
+
+    private function buildAvailabilitySubQuery($initialIds, $params, $target, $targetId = null)
+    {
         $query = DB::table('product_variants as pv')
-            ->join('stocks as st', 'pv.id', '=', 'st.product_variant_id')
+            ->join('products as p', 'pv.product_id', '=', 'p.id')
             ->join('prices as ps', 'pv.id', '=', 'ps.product_variant_id')
+            ->join('stocks as st', 'pv.id', '=', 'st.product_variant_id')
+            ->whereIn('p.id', $initialIds)
             ->where('st.quantity', '>', 0)
-            ->where('ps.price_type_id', 1)
-            ->whereIn('pv.product_id', $baseProductIds);
+            ->where('ps.price_type_id', 1);
 
         if ($params->minPrice) $query->where('ps.amount', '>=', $params->minPrice);
         if ($params->maxPrice) $query->where('ps.amount', '<=', $params->maxPrice);
 
-        foreach ($activeFilters as $slug => $values) {
-            $query->whereIn('pv.id', function ($q) use ($slug, $values) {
-                $q->select('pvp_sub.variant_id')->from('product_variant_properties as pvp_sub')
-                    ->join('properties as pr_sub', 'pvp_sub.property_id', '=', 'pr_sub.id')
-                    ->where('pr_sub.slug', $slug)->whereIn('pvp_sub.value', $values);
+        // Исключаем "себя" из фильтрации (Self-exclusion)
+        if ($target !== 'type' && !empty($params->productTypes)) {
+            $query->whereIn('p.product_type_id', function($q) use ($params) {
+                $q->select('id')->from('product_types')->whereIn('slug', $params->productTypes);
+            });
+        }
+        if ($target !== 'brand' && !empty($params->brands)) {
+            $query->whereIn('p.brand_id', function($q) use ($params) {
+                $q->select('id')->from('brands')->whereIn('slug', $params->brands);
             });
         }
 
-        return $query->distinct()->pluck('pv.id');
-    }
+        // Фильтрация по свойствам
+        foreach ($params->filters as $slug => $values) {
+            if (empty($values)) continue;
+            $currentPropId = Cache::remember("prop_id_$slug", 3600, fn() => Property::where('slug', $slug)->value('id'));
+            if ($target === 'property' && $targetId == $currentPropId) continue;
 
-    /**
-     * Расчет доступности опций фильтра (UNION ALL)
-     *
-     * @param $baseProductIds
-     * @param $filterMeta
-     * @param ProductFilterParams $params
-     * @return Collection
-     */
-    private function calculateAvailability($baseProductIds, $filterMeta, ProductFilterParams $params): Collection
-    {
-        $activeFilters = collect($params->filters)
-            ->map(fn($v) => collect($v)->flatten()->filter()->toArray())
-            ->filter();
-
-        $unionQueries = [];
-
-        foreach ($filterMeta as $prop) {
-            $currentSlug = strtolower($prop->slug);
-            $otherFilters = $activeFilters->filter(fn($v, $k) => strtolower($k) !== $currentSlug);
-
-            $subQuery = DB::table('product_variants as pv')
-                ->join('stocks as st', 'pv.id', '=', 'st.product_variant_id')
-                ->join('prices as ps', 'pv.id', '=', 'ps.product_variant_id')
-                ->join('product_variant_properties as pvp', 'pv.id', '=', 'pvp.variant_id')
-                ->select(DB::raw("$prop->id as property_group_id"), 'pvp.value as available_value')
-                ->where('st.quantity', '>', 0)
-                ->where('ps.price_type_id', 1)
-                ->whereIn('pv.product_id', $baseProductIds)
-                ->where('pvp.property_id', $prop->id);
-
-            if ($params->minPrice) $subQuery->where('ps.amount', '>=', $params->minPrice);
-            if ($params->maxPrice) $subQuery->where('ps.amount', '<=', $params->maxPrice);
-
-            foreach ($otherFilters as $slug => $values) {
-                $subQuery->whereIn('pv.id', function ($q) use ($slug, $values) {
-                    $q->select('pvp_sub.variant_id')->from('product_variant_properties as pvp_sub')
-                        ->join('properties as pr_sub', 'pvp_sub.property_id', '=', 'pr_sub.id')
-                        ->where('pr_sub.slug', $slug)->whereIn('pvp_sub.value', $values);
-                });
-            }
-
-            $unionQueries[] = $subQuery->distinct();
+            $query->whereIn('pv.id', function ($q) use ($slug, $values) {
+                $q->select('pvp_sub.variant_id')->from('product_variant_properties as pvp_sub')
+                    ->join('properties as pr_sub', 'pvp_sub.property_id', '=', 'pr_sub.id')
+                    ->where('pr_sub.slug', $slug)->whereIn('pvp_sub.value', (array)$values);
+            });
         }
 
-        if (empty($unionQueries)) return collect();
-
-        $firstQuery = array_shift($unionQueries);
-        foreach ($unionQueries as $query) {
-            $firstQuery->unionAll($query);
+        // ::text обязателен для PostgreSQL в UNION ALL
+        if ($target === 'type') {
+            return $query->select(DB::raw("'type' as group_key"), DB::raw("p.product_type_id::text as val"))->distinct();
         }
-
-        return $firstQuery->get()
-            ->groupBy('property_group_id')
-            ->map(fn($group) => $group->pluck('available_value')->map(fn($v) => (string)$v)->toArray());
+        if ($target === 'brand') {
+            return $query->select(DB::raw("'brand' as group_key"), DB::raw("p.brand_id::text as val"))->distinct();
+        }
+        return $query->join('product_variant_properties as pvp', 'pv.id', '=', 'pvp.variant_id')
+            ->where('pvp.property_id', $targetId)
+            ->select(DB::raw("'prop_' || pvp.property_id as group_key"), DB::raw("pvp.value::text as val"))->distinct();
     }
 
-    /**
-     * Получение структуры фильтров для категории
-     *
-     * @param $categoryId
-     * @return Collection
-     */
-    private function getFilterMeta($categoryId): Collection
+    private function getProductTypes($categoryId, $initialIds, $params, $availMap): Collection
     {
-        // Кэшируем на 24 часа (или до тех пор, пока не обновим товар)
-        return Cache::remember("category_filters_meta_{$categoryId}", now()->addDay(), function () use ($categoryId) {
-            return Property::whereHas('variantValues.variant.product', function ($q) use ($categoryId) {
-                $q->where('category_id', $categoryId);
-            })
-                ->with(['measure', 'variantValues' => function ($q) use ($categoryId) {
-                    $q->whereHas('variant.product', fn($pq) => $pq->where('category_id', $categoryId))
-                        ->select('property_id', 'value', 'label', 'priority')
-                        ->distinct();
-                }])
-                ->orderBy('priority')
-                ->get();
-        });
+        $availableIds = $availMap->get('type', []);
+        return ProductType::whereHas('products', fn($q) => $q->whereIn('products.id', $initialIds))
+            ->withCount(['products as variants_count' => function ($q) use ($initialIds) {
+                $q->whereIn('products.id', $initialIds)->join('product_variants', 'products.id', '=', 'product_variants.product_id');
+            }])->get()->map(fn($t) => [
+                'name' => "{$t->name} ({$t->variants_count})",
+                'slug' => $t->slug,
+                'is_selected' => in_array($t->slug, $params->productTypes),
+                'is_available' => in_array((string)$t->id, $availableIds)
+            ]);
     }
 
-    /**
-     * Форматирование фильтров для фронтенда
-     *
-     * @param $filterMeta
-     * @param $availabilityMap
-     * @return Collection
-     */
+    private function getBrands($categoryId, $initialIds, $params, $availMap): Collection
+    {
+        $availableIds = $availMap->get('brand', []);
+        return Brand::whereHas('products', fn($q) => $q->whereIn('products.id', $initialIds))
+            ->withCount(['products as variants_count' => function ($q) use ($initialIds) {
+                $q->whereIn('products.id', $initialIds)->join('product_variants', 'products.id', '=', 'product_variants.product_id');
+            }])->get()->map(fn($b) => [
+                'name' => "{$b->name} ({$b->variants_count})",
+                'slug' => $b->slug,
+                'is_selected' => in_array($b->slug, $params->brands),
+                'is_available' => in_array((string)$b->id, $availableIds)
+            ]);
+    }
+
     private function formatSmartFilters($filterMeta, $availabilityMap): Collection
     {
         return $filterMeta->map(function ($prop) use ($availabilityMap) {
-            $availableValues = $availabilityMap->get($prop->id, []);
+            $availableValues = $availabilityMap->get("prop_{$prop->id}", []);
             return [
-                'name' => $prop->name,
-                'slug' => $prop->slug,
-                'unit' => $prop->measure?->symbol,
-                'options' => $prop->variantValues->map(
-                    fn($v) => [
-                        'value' => $v->value,
-                        'label' => $v->label ?? $v->value,
-                        'is_available' => in_array((string)$v->value, $availableValues, true),
-                        'priority' => $v->priority
-                    ]
-                )->unique('value')->sortBy('priority')->values()
+                'name' => $prop->name, 'slug' => $prop->slug, 'unit' => $prop->measure?->symbol,
+                'options' => $prop->variantValues->map(fn($v) => [
+                    'value' => $v->value, 'label' => $v->label ?? $v->value, 'priority' => $v->priority,
+                    'is_available' => in_array((string)$v->value, $availableValues, true),
+                ])->unique('value')->sortBy('priority')->values()
             ];
         });
     }
 
-    /**
-     * Получение списка типов товаров для боковой панели
-     *
-     * @param $categoryId
-     * @param $initialProductIds
-     * @param ProductFilterParams $params
-     * @return Collection
-     */
-    private function getProductTypes($categoryId, $initialProductIds, ProductFilterParams $params): Collection
+    private function getFinalVariantIds($baseProductIds, ProductFilterParams $params): Collection
     {
-        return Cache::remember("cat_types_variant_count_{$categoryId}", now()->addMinutes(10), function () use ($initialProductIds) {
-            return ProductType::whereHas('products', function ($q) use ($initialProductIds) {
-                $q->whereIn('products.id', $initialProductIds);
-            })
-                /*
-                   Используем подзапрос для подсчета вариантов всех товаров,
-                   которые привязаны к данному типу и входят в нашу категорию
-                */
-                ->withCount(['products as variants_count' => function ($q) use ($initialProductIds) {
-                    $q->whereIn('products.id', $initialProductIds)
-                        ->join('product_variants', 'products.id', '=', 'product_variants.product_id')
-                        // Считаем именно ID вариантов
-                        ->select(DB::raw('count(product_variants.id)'));
-                }])
-                ->get(['name', 'slug', 'variants_count']);
-        })->map(function ($type) use ($params) {
-            return [
-                // Теперь выводим количество вариантов
-                'name' => "{$type->name} ({$type->variants_count})",
-                'slug' => $type->slug,
-                'is_selected' => in_array($type->slug, $params->productTypes)
-            ];
+        $query = DB::table('product_variants as pv')
+            ->join('stocks as st', 'pv.id', '=', 'st.product_variant_id')
+            ->join('prices as ps', 'pv.id', '=', 'ps.product_variant_id')
+            ->where('st.quantity', '>', 0)->where('ps.price_type_id', 1)->whereIn('pv.product_id', $baseProductIds);
+
+        if ($params->minPrice) $query->where('ps.amount', '>=', $params->minPrice);
+        if ($params->maxPrice) $query->where('ps.amount', '<=', $params->maxPrice);
+
+        foreach ($params->filters as $slug => $values) {
+            if (empty($values)) continue;
+            $query->whereIn('pv.id', function ($q) use ($slug, $values) {
+                $q->select('pvp_sub.variant_id')->from('product_variant_properties as pvp_sub')
+                    ->join('properties as pr_sub', 'pvp_sub.property_id', '=', 'pr_sub.id')
+                    ->where('pr_sub.slug', $slug)->whereIn('pvp_sub.value', (array)$values);
+            });
+        }
+        return $query->distinct()->pluck('pv.id');
+    }
+
+    private function getFilterMeta($categoryId): Collection
+    {
+        return Cache::remember("category_filters_meta_{$categoryId}", now()->addDay(), function () use ($categoryId) {
+            return Property::whereHas('variantValues.variant.product', fn($q) => $q->where('category_id', $categoryId))
+                ->with(['measure', 'variantValues' => fn($q) => $q->whereHas('variant.product', fn($pq) => $pq->where('category_id', $categoryId))
+                    ->select('property_id', 'value', 'label', 'priority')->distinct()])->orderBy('priority')->get();
         });
     }
 
-    /**
-     * Расчет диапазона цен
-     *
-     * @param $categoryId
-     * @return array
-     */
-    public
-    function getPriceRange($categoryId): array
+    public function getPriceRange($categoryId): array
     {
         return Cache::remember("category_price_range_{$categoryId}", now()->addDay(), function () use ($categoryId) {
-            $data = DB::table('prices as ps')
-                ->join('product_variants as pv', 'ps.product_variant_id', '=', 'pv.id')
-                ->join('products as p', 'pv.product_id', '=', 'p.id')
-                ->where('p.category_id', $categoryId)
-                ->where('ps.price_type_id', PriceType::RETAIL)
-                ->selectRaw('MIN(amount) as min, MAX(amount) as max')
-                ->first();
-
-            return [
-                'min' => floor($data->min ?? 0),
-                'max' => ceil($data->max ?? 1000000)
-            ];
+            $data = DB::table('prices as ps')->join('product_variants as pv', 'ps.product_variant_id', '=', 'pv.id')
+                ->join('products as p', 'pv.product_id', '=', 'p.id')->where('p.category_id', $categoryId)
+                ->where('ps.price_type_id', 1)->selectRaw('MIN(amount) as min, MAX(amount) as max')->first();
+            return ['min' => floor($data->min ?? 0), 'max' => ceil($data->max ?? 0)];
         });
     }
 }
-

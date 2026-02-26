@@ -1,8 +1,8 @@
 <?php
 
-use Illuminate\Database\Migrations\Migration;
-use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Database\Migrations\Migration;
 
 return new class extends Migration {
     /**
@@ -10,26 +10,37 @@ return new class extends Migration {
      */
     public function up(): void
     {
+        // 1. Таблица типов товаров (Худи, Футболки и т.д.)
         Schema::create('product_types', function (Blueprint $table) {
             $table->id();
             $table->string('name');
-            $table->string('slug')
-                ->unique();
+            $table->string('slug')->unique();
             $table->timestamps();
         });
 
-        Schema::create('product_product_type', function (Blueprint $table) {
+        // 2. Таблица брендов (Nike, Adidas и т.д.)
+        Schema::create('brands', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('product_id')
-                ->constrained()
-                ->cascadeOnDelete();
+            $table->string('name');
+            $table->string('slug')->unique();
+            $table->timestamps();
+        });
+
+        // 3. Добавляем колонки в существующую таблицу products
+        Schema::table('products', function (Blueprint $table) {
             $table->foreignId('product_type_id')
+                ->nullable()
                 ->constrained()
-                ->cascadeOnDelete();
+                ->nullOnDelete();
 
-            $table->index(['product_type_id', 'product_id'], 'idx_type_product');
+            $table->foreignId('brand_id')
+                ->nullable()
+                ->constrained()
+                ->nullOnDelete();
 
-            $table->index(['product_id', 'product_type_id'], 'idx_product_type');
+            // Индексы для фильтрации внутри категории
+            $table->index(['category_id', 'product_type_id'], 'idx_products_cat_type');
+            $table->index(['category_id', 'brand_id'], 'idx_products_cat_brand');
         });
     }
 
@@ -38,7 +49,13 @@ return new class extends Migration {
      */
     public function down(): void
     {
-        Schema::dropIfExists('product_product_type');
+        Schema::table('products', function (Blueprint $table) {
+            $table->dropForeign(['product_type_id']);
+            $table->dropForeign(['brand_id']);
+            $table->dropColumn(['product_type_id', 'brand_id']);
+        });
+
+        Schema::dropIfExists('brands');
         Schema::dropIfExists('product_types');
     }
 };
