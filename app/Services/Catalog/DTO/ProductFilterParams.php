@@ -10,7 +10,8 @@ class ProductFilterParams
         public array $filters = [],
         public ?float $minPrice = null,
         public ?float $maxPrice = null,
-        public string $sort = 'newest'
+        public string $sort = 'newest',
+        public ?array $productTypes = [],
     ) {}
 
     public static function fromRequest(Request $request): self
@@ -19,7 +20,8 @@ class ProductFilterParams
             filters: (array)$request->input('filters', []),
             minPrice: $request->input('min_price'),
             maxPrice: $request->input('max_price'),
-            sort: $request->input('sort', 'newest')
+            sort: $request->input('sort', 'newest'),
+            productTypes: (array)$request->input('product_types', []),
         );
     }
 }

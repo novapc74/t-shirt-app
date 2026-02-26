@@ -32,8 +32,9 @@
                         {{ opt.value }}
                     </button>
 
+                    <!-- СКРЫВАЕМ КРЕСТИК, ЕСЛИ АКТИВЕН САЙДБАР -->
                     <button
-                        v-if="selection[groupName]"
+                        v-if="selection[groupName] && !isSideFilterActive"
                         @click="resetGroup(groupName)"
                         class="p-1.5 text-gray-300 hover:text-red-500 transition-colors rounded-md"
                     >
@@ -44,10 +45,10 @@
                 </div>
             </div>
 
-            <!-- БЛОК СБРОСА: закругление 4px, тонкий контур, уменьшенная высота h-6 -->
+            <!-- СКРЫВАЕМ ОБЩИЙ СБРОС, ЕСЛИ АКТИВЕН САЙДБАР -->
             <div class="h-6 flex justify-end items-center mt-3">
                 <button
-                    v-if="Object.keys(selection).length > 1"
+                    v-if="Object.keys(selection).length > 1 && !isSideFilterActive"
                     @click="resetAll"
                     class="px-2 py-1.5 text-[9px] font-black uppercase tracking-widest text-red-600 border border-red-800/40 rounded-[4px] hover:bg-red-600 hover:text-white transition-all active:scale-95 flex items-center gap-1"
                 >
@@ -80,7 +81,8 @@ import { ref, computed, watch, onMounted } from 'vue'
 
 const props = defineProps({
     product: Object,
-    activeFilters: Object
+    activeFilters: Object,
+    isSideFilterActive: Boolean // Добавили пропс
 })
 
 const selection = ref({})
@@ -124,11 +126,13 @@ const syncWithSidebar = () => {
 }
 
 function resetGroup(groupName) {
+    if (props.isSideFilterActive) return; // Блокировка действия при активном сайдбаре
     delete selection.value[groupName];
     autoSelect();
 }
 
 function resetAll() {
+    if (props.isSideFilterActive) return;
     selection.value = {};
     autoSelect();
 }

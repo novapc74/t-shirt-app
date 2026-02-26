@@ -3,9 +3,8 @@
 namespace App\Services\Catalog;
 
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
-use App\Models\{Product, Property, Category};
+use Illuminate\Support\Facades\{Cache, DB};
+use App\Models\{PriceType, Product, ProductType, Property, Category};
 use App\Services\Catalog\DTO\ProductFilterParams;
 
 class CatalogService
@@ -20,15 +19,29 @@ class CatalogService
     public function getCategoryCatalog(Category $category, ProductFilterParams $params): ?array
     {
         // 1. Базовые ID товаров категории в наличии
-        $baseProductIds = Cache::remember("category_base_ids_{$category->id}", now()->addMinutes(10), function () use ($category) {
+        $initialProductIds = Cache::remember("category_base_ids_{$category->id}", now()->addMinutes(10), function () use ($category) {
             return Product::where('category_id', $category->id)
                 ->whereHas('variants.stocks', fn($q) => $q->where('quantity', '>', 0))
                 ->pluck('id');
         });
 
+        if ($initialProductIds->isEmpty()) {
+            return null;
+        }
+
+        // --- НОВОЕ: Фильтрация по типам товаров (сужаем baseProductIds) ---
+        $baseProductIds = $initialProductIds;
+        if (!empty($params->productTypes)) {
+            $baseProductIds = DB::table('product_product_type')
+                ->whereIn('product_id', $initialProductIds)
+                ->whereIn('product_type_id', function ($q) use ($params) {
+                    $q->select('id')->from('product_types')->whereIn('slug', $params->productTypes);
+                })
+                ->pluck('product_id');
+        }
 
         if ($baseProductIds->isEmpty()) {
-            return null;
+            return null; // Если после выбора типа ничего не осталось
         }
 
         // 2. Метаданные свойств
@@ -40,7 +53,7 @@ class CatalogService
         // 4. Поиск финальных Variant IDs для выдачи
         $finalVariantIds = $this->getFinalVariantIds($baseProductIds, $params);
 
-        // 5. Загрузка товаров с пагинацией
+        // 5. Загрузка товаров
         $products = Product::whereIn('id', function ($q) use ($finalVariantIds) {
             $q->select('product_id')->from('product_variants')->whereIn('id', $finalVariantIds);
         })
@@ -53,9 +66,10 @@ class CatalogService
             ->withQueryString();
 
         return [
-            'price_range' => $this->getPriceRange($category->id),
-            'filters' => $this->formatSmartFilters($filterMeta, $availabilityMap),
-            'products' => $products
+            'price_range'   => $this->getPriceRange($category->id),
+            'filters'       => $this->formatSmartFilters($filterMeta, $availabilityMap),
+            'product_types' => $this->getProductTypes($category->id, $initialProductIds, $params), // НОВОЕ
+            'products'      => $products
         ];
     }
 
@@ -201,18 +215,55 @@ class CatalogService
     }
 
     /**
+     * Получение списка типов товаров для боковой панели
+     *
+     * @param $categoryId
+     * @param $initialProductIds
+     * @param ProductFilterParams $params
+     * @return Collection
+     */
+    private function getProductTypes($categoryId, $initialProductIds, ProductFilterParams $params): Collection
+    {
+        return Cache::remember("cat_types_variant_count_{$categoryId}", now()->addMinutes(10), function () use ($initialProductIds) {
+            return ProductType::whereHas('products', function ($q) use ($initialProductIds) {
+                $q->whereIn('products.id', $initialProductIds);
+            })
+                /*
+                   Используем подзапрос для подсчета вариантов всех товаров,
+                   которые привязаны к данному типу и входят в нашу категорию
+                */
+                ->withCount(['products as variants_count' => function ($q) use ($initialProductIds) {
+                    $q->whereIn('products.id', $initialProductIds)
+                        ->join('product_variants', 'products.id', '=', 'product_variants.product_id')
+                        // Считаем именно ID вариантов
+                        ->select(DB::raw('count(product_variants.id)'));
+                }])
+                ->get(['name', 'slug', 'variants_count']);
+        })->map(function ($type) use ($params) {
+            return [
+                // Теперь выводим количество вариантов
+                'name' => "{$type->name} ({$type->variants_count})",
+                'slug' => $type->slug,
+                'is_selected' => in_array($type->slug, $params->productTypes)
+            ];
+        });
+    }
+
+    /**
      * Расчет диапазона цен
      *
      * @param $categoryId
      * @return array
      */
-    public function getPriceRange($categoryId): array
+    public
+    function getPriceRange($categoryId): array
     {
         return Cache::remember("category_price_range_{$categoryId}", now()->addDay(), function () use ($categoryId) {
             $data = DB::table('prices as ps')
                 ->join('product_variants as pv', 'ps.product_variant_id', '=', 'pv.id')
                 ->join('products as p', 'pv.product_id', '=', 'p.id')
                 ->where('p.category_id', $categoryId)
+                ->where('ps.price_type_id', PriceType::RETAIL)
                 ->selectRaw('MIN(amount) as min, MAX(amount) as max')
                 ->first();
 

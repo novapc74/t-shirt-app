@@ -13,7 +13,9 @@ class ProductController extends Controller
 {
     public function __construct(
         protected CatalogService $productService
-    ) {}
+    )
+    {
+    }
 
     public function index(Category $category, Request $request): Response
     {
@@ -26,12 +28,14 @@ class ProductController extends Controller
         }
 
         return Inertia::render('Catalog/CategoryPage', [
-            'category'       => $category->name,
-            'price_range'    => $data['price_range'],
-            'filters'        => $data['filters'],
-            'products'       => ProductResource::collection($data['products']),
+            'category' => $category->name,
+            'price_range' => $data['price_range'],
+            'filters' => $data['filters'],
+            'product_types' => $data['product_types'],
+            'products' => ProductResource::collection($data['products']),
             'active_filters' => (object)$params->filters,
-            'current_sort'   => $params->sort
+            'active_types' => $params->productTypes,
+            'current_sort' => $params->sort
         ]);
     }
 
@@ -41,11 +45,13 @@ class ProductController extends Controller
     private function emptyResponse(Category $category): Response
     {
         return Inertia::render('Catalog/CategoryPage', [
-            'category'       => $category->name,
-            'price_range'    => ['min' => 0, 'max' => 0],
-            'filters'        => [],
-            'products'       => ['data' => []],
+            'category' => $category->name,
+            'price_range' => ['min' => 0, 'max' => 0],
+            'filters' => [],
+            'product_types' => [],
+            'products' => ['data' => []],
             'active_filters' => (object)[],
+            'active_types' => [],
         ]);
     }
 }
