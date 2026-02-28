@@ -3,42 +3,44 @@
 namespace App\Models;
 
 use Database\Factories\ProductFactory;
-use Eloquent;
 use Exception;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Support\Carbon;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Spatie\Sluggable\HasSlug;
 use Spatie\Sluggable\SlugOptions;
 
 /**
- * @method static ProductFactory factory($count = null, $state = [])
- * @method static Builder<static>|Product newModelQuery()
- * @method static Builder<static>|Product newQuery()
- * @method static Builder<static>|Product query()
  * @property int $id
  * @property int $category_id
- * @property string $name
+ * @property int|null $brand_id
+ * @property string $title
  * @property string $slug
  * @property string|null $description
- * @property Carbon|null $created_at
- * @property Carbon|null $updated_at
- * @property-read Category $category
- * @method static Builder<static>|Product whereCategoryId($value)
- * @method static Builder<static>|Product whereCreatedAt($value)
- * @method static Builder<static>|Product whereDescription($value)
- * @method static Builder<static>|Product whereId($value)
- * @method static Builder<static>|Product whereName($value)
- * @method static Builder<static>|Product whereSlug($value)
- * @method static Builder<static>|Product whereUpdatedAt($value)
- * @property-read Collection<int, ProductVariant> $variants
+ * @property bool $is_active
+ * @property \Illuminate\Support\Carbon|null $created_at
+ * @property \Illuminate\Support\Carbon|null $updated_at
+ * @property-read \App\Models\ProductVariant|null $defaultVariant
+ * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\PropertyValue> $propertyValues
+ * @property-read int|null $property_values_count
+ * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\ProductVariant> $variants
  * @property-read int|null $variants_count
- * @mixin Eloquent
+ * @method static \Database\Factories\ProductFactory factory($count = null, $state = [])
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Product newModelQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Product newQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Product query()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Product whereBrandId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Product whereCategoryId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Product whereCreatedAt($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Product whereDescription($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Product whereId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Product whereIsActive($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Product whereSlug($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Product whereTitle($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Product whereUpdatedAt($value)
+ * @mixin \Eloquent
  */
 class Product extends Model
 {
@@ -48,9 +50,11 @@ class Product extends Model
 
     protected $fillable = [
         'category_id',
-        'name',
+        'brand_id',
+        'title',
         'slug',
-        'description'
+        'description',
+        'is_active'
     ];
 
     protected $hidden = ['created_at', 'updated_at'];
@@ -72,42 +76,24 @@ class Product extends Model
     public function getSlugOptions(): SlugOptions
     {
         return SlugOptions::create()
-            ->generateSlugsFrom('name')
+            ->generateSlugsFrom('title')
             ->saveSlugsTo('slug')
-            ->doNotGenerateSlugsOnUpdate(); // Сохраняем SEO-ссылку при переименовании
+            ->doNotGenerateSlugsOnUpdate();
     }
 
-    /**
-     * Поиск модели по слагу в роутах
-     */
-    public function getRouteKeyName(): string
+    public function propertyValues(): belongsToMany
     {
-        return 'slug';
+        return $this->belongsToMany(PropertyValue::class, 'product_properties');
     }
 
-    /**
-     * Связь с категорией
-     */
-    public function category(): BelongsTo
-    {
-        return $this->belongsTo(Category::class);
-    }
-
-    /**
-     * Связь с модификациями (вариантами) товара
-     */
     public function variants(): HasMany
     {
         return $this->hasMany(ProductVariant::class);
     }
 
-    public function productType(): BelongsTo
+    public function defaultVariant(): HasOne
     {
-        return $this->belongsTo(ProductType::class);
-    }
-
-    public function brand(): BelongsTo
-    {
-        return $this->belongsTo(Brand::class);
+        return $this->hasOne(ProductVariant::class)
+            ->where('is_default', true);
     }
 }

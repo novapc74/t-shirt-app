@@ -12,7 +12,7 @@ class CatalogService
     public function getCategoryCatalog(Category $category, ProductFilterParams $params): ?array
     {
         // 1. Базовые ID товаров категории в наличии
-        $initialProductIds = Cache::remember("cat_base_ids_{$category->id}", now()->addMinutes(10), function () use ($category) {
+        $initialProductIds = Cache::remember("cat_base_ids_$category->id", now()->addMinutes(10), function () use ($category) {
             return Product::where('category_id', $category->id)
                 ->whereHas('variants.stocks', fn($q) => $q->where('quantity', '>', 0))
                 ->pluck('id');
@@ -153,7 +153,7 @@ class CatalogService
             ->withCount(['products as variants_count' => function ($q) use ($initialIds) {
                 $q->whereIn('products.id', $initialIds)->join('product_variants', 'products.id', '=', 'product_variants.product_id');
             }])->get()->map(fn($t) => [
-                'name' => "{$t->name} ({$t->variants_count})",
+                'name' => "$t->name ($t->variants_count)",
                 'slug' => $t->slug,
                 'is_selected' => in_array($t->slug, $params->productTypes),
                 'is_available' => in_array((string)$t->id, $availableIds)

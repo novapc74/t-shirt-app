@@ -2,45 +2,54 @@
 
 namespace App\Models;
 
-use Database\Factories\MeasureFactory;
-use Eloquent;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Collection;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Support\Carbon;
+use Spatie\Sluggable\HasSlug;
+use Spatie\Sluggable\SlugOptions;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 
 /**
  * @property int $id
- * @property string $name
- * @property string $symbol
- * @property Carbon|null $created_at
- * @property Carbon|null $updated_at
- * @property-read Collection<int, Property> $properties
- * @property-read int|null $properties_count
- * @method static Builder<static>|Measure newModelQuery()
- * @method static Builder<static>|Measure newQuery()
- * @method static Builder<static>|Measure query()
- * @method static Builder<static>|Measure whereCreatedAt($value)
- * @method static Builder<static>|Measure whereId($value)
- * @method static Builder<static>|Measure whereName($value)
- * @method static Builder<static>|Measure whereSymbol($value)
- * @method static Builder<static>|Measure whereUpdatedAt($value)
- * @method static MeasureFactory factory($count = null, $state = [])
- * @mixin Eloquent
+ * @property string $title
+ * @property string $slug
+ * @property \Illuminate\Support\Carbon|null $created_at
+ * @property \Illuminate\Support\Carbon|null $updated_at
+ * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\PropertyValue> $propertyValues
+ * @property-read int|null $property_values_count
+ * @method static \Database\Factories\MeasureFactory factory($count = null, $state = [])
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Measure newModelQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Measure newQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Measure query()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Measure whereCreatedAt($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Measure whereId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Measure whereSlug($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Measure whereTitle($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Measure whereUpdatedAt($value)
+ * @mixin \Eloquent
  */
 class Measure extends Model
 {
     use HasFactory;
+    use HasSlug;
 
     protected $fillable = [
-        'name',
-        'symbol'
+        'title',
+        'slug',
     ];
 
-    public function properties(): HasMany
+    public function getSlugOptions(): SlugOptions
     {
-        return $this->hasMany(Property::class);
+        return SlugOptions::create()
+            ->generateSlugsFrom('title')
+            ->saveSlugsTo('slug');
+    }
+
+    /**
+     * Получить все значения характеристик, использующие эту единицу измерения.
+     * Например: $kgMeasure->propertyValues;
+     */
+    public function propertyValues(): HasMany
+    {
+        return $this->hasMany(PropertyValue::class, 'measure_id');
     }
 }

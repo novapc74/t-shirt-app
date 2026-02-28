@@ -2,58 +2,58 @@
 
 namespace App\Models;
 
-use Database\Factories\PropertyFactory;
-use Eloquent;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Support\Carbon;
+use Spatie\Sluggable\HasSlug;
+use Spatie\Sluggable\SlugOptions;
 
 /**
  * @property int $id
- * @property string $name
+ * @property string $title
  * @property string $slug
- * @property int|null $measure_id
- * @property Carbon|null $created_at
- * @property Carbon|null $updated_at
- * @property-read Measure|null $measure
- * @property-read Collection<int, ProductVariantProperty> $variantValues
- * @property-read int|null $variant_values_count
- * @method static Builder<static>|Property newModelQuery()
- * @method static Builder<static>|Property newQuery()
- * @method static Builder<static>|Property query()
- * @method static Builder<static>|Property whereCreatedAt($value)
- * @method static Builder<static>|Property whereId($value)
- * @method static Builder<static>|Property whereMeasureId($value)
- * @method static Builder<static>|Property whereName($value)
- * @method static Builder<static>|Property whereSlug($value)
- * @method static Builder<static>|Property whereUpdatedAt($value)
- * @method static PropertyFactory factory($count = null, $state = [])
- *
- * @mixin Eloquent
+ * @property int $priority
+ * @property \Illuminate\Support\Carbon|null $created_at
+ * @property \Illuminate\Support\Carbon|null $updated_at
+ * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\PropertyValue> $values
+ * @property-read int|null $values_count
+ * @method static \Database\Factories\PropertyFactory factory($count = null, $state = [])
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Property newModelQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Property newQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Property query()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Property whereCreatedAt($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Property whereId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Property wherePriority($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Property whereSlug($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Property whereTitle($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Property whereUpdatedAt($value)
+ * @mixin \Eloquent
  */
 class Property extends Model
 {
     use HasFactory;
+    use HasSlug;
 
     protected $fillable = [
-        'name',
+        'title',
         'slug',
-        'measure_id'
+        'priority',
     ];
 
-    protected $hidden = ['created_at', 'updated_at'];
-
-    public function measure(): BelongsTo
+    public function getSlugOptions(): SlugOptions
     {
-        return $this->belongsTo(Measure::class);
+        return SlugOptions::create()
+            ->generateSlugsFrom('title')
+            ->saveSlugsTo('slug')
+            ->doNotGenerateSlugsOnUpdate();
     }
 
-    public function variantValues(): HasMany
+    /**
+     * Получить все значения для данного свойства.
+     * Например: $colorProperty->values;
+     */
+    public function values(): HasMany
     {
-        return $this->hasMany(ProductVariantProperty::class);
+        return $this->hasMany(PropertyValue::class, 'property_id');
     }
 }

@@ -4,23 +4,25 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration
-{
+return new class extends Migration {
     /**
      * Run the migrations.
      */
     public function up(): void
     {
-        Schema::create('product_variants', function (Blueprint $table) {
+        Schema::create('product_properties', function (Blueprint $table) {
             $table->id();
             $table->foreignId('product_id')
                 ->constrained()
                 ->onDelete('cascade');
-            $table->string('sku')
-                ->unique();
-            $table->timestamps();
+            $table->foreignId('property_value_id')
+                ->constrained()
+                ->onDelete('cascade');
 
-            $table->index(['product_id', 'id'], 'idx_variants_product_lookup');
+            $table->unique(['product_id', 'property_value_id']);
+            $table->index('property_value_id', 'idx_property_value_lookup');
+
+            $table->timestamps();
         });
     }
 
@@ -29,6 +31,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('product_variants');
+        Schema::dropIfExists('product_properties');
     }
 };

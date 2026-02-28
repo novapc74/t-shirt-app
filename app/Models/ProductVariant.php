@@ -2,61 +2,79 @@
 
 namespace App\Models;
 
-use Eloquent;
-use Illuminate\Support\Carbon;
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Collection;
-use Database\Factories\ProductVariantFactory;
-use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * @property int $id
  * @property int $product_id
+ * @property int|null $color_id
+ * @property int|null $size_id
+ * @property int|null $gender_id
  * @property string $sku
- * @property Carbon|null $created_at
- * @property Carbon|null $updated_at
- * @property-read Collection<int, Price> $prices
+ * @property bool $is_default
+ * @property \Illuminate\Support\Carbon|null $created_at
+ * @property \Illuminate\Support\Carbon|null $updated_at
+ * @property-read \App\Models\Color|null $color
+ * @property-read \App\Models\Gender|null $gender
+ * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\Price> $prices
  * @property-read int|null $prices_count
- * @property-read Product $product
- * @property-read Collection<int, Stock> $stocks
+ * @property-read \App\Models\Product $product
+ * @property-read \App\Models\Size|null $size
+ * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\Stock> $stocks
  * @property-read int|null $stocks_count
- * @method static ProductVariantFactory factory($count = null, $state = [])
- * @method static Builder<static>|ProductVariant newModelQuery()
- * @method static Builder<static>|ProductVariant newQuery()
- * @method static Builder<static>|ProductVariant query()
- * @method static Builder<static>|ProductVariant whereCreatedAt($value)
- * @method static Builder<static>|ProductVariant whereId($value)
- * @method static Builder<static>|ProductVariant whereProductId($value)
- * @method static Builder<static>|ProductVariant whereSku($value)
- * @method static Builder<static>|ProductVariant whereUpdatedAt($value)
- * @method static Builder<static>|ProductVariant whereAttribute(string $string, mixed $string1)
- * @property-read Collection<int, ProductVariantProperty> $variantProperties
- * @property-read int|null $variant_properties_count
- * @mixin Eloquent
+ * @method static \Database\Factories\ProductVariantFactory factory($count = null, $state = [])
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ProductVariant newModelQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ProductVariant newQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ProductVariant query()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ProductVariant whereColorId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ProductVariant whereCreatedAt($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ProductVariant whereGenderId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ProductVariant whereId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ProductVariant whereIsDefault($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ProductVariant whereProductId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ProductVariant whereSizeId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ProductVariant whereSku($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|ProductVariant whereUpdatedAt($value)
+ * @mixin \Eloquent
  */
 class ProductVariant extends Model
 {
-    /** @use HasFactory<ProductVariantFactory> */
     use HasFactory;
 
     protected $fillable = [
         'product_id',
+        'color_id',
+        'size_id',
+        'gender_id',
         'sku',
+        'is_default'
     ];
 
-    protected $hidden = ['created_at', 'updated_at'];
+    protected $casts = [
+        'is_default' => 'boolean',
+    ];
 
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class);
     }
 
-    public function prices(): HasMany
+    public function color(): BelongsTo
     {
-        return $this->hasMany(Price::class);
+        return $this->belongsTo(Color::class);
+    }
+
+    public function size(): BelongsTo
+    {
+        return $this->belongsTo(Size::class);
+    }
+
+    public function gender(): BelongsTo
+    {
+        return $this->belongsTo(Gender::class);
     }
 
     public function stocks(): HasMany
@@ -64,8 +82,9 @@ class ProductVariant extends Model
         return $this->hasMany(Stock::class);
     }
 
-    public function properties(): HasMany
+
+    public function prices(): HasMany
     {
-        return $this->hasMany(ProductVariantProperty::class, 'variant_id');
+        return $this->hasMany(Price::class);
     }
 }

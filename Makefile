@@ -37,6 +37,9 @@ update-models:
 db-refresh:
 	./vendor/bin/sail artisan migrate:fresh --seed
 
+php-cli:
+	./vendor/bin/sail bash
+
 
 
 

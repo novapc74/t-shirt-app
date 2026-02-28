@@ -4,25 +4,19 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration
-{
+return new class extends Migration {
     /**
      * Run the migrations.
      */
     public function up(): void
     {
-        Schema::create('categories', function (Blueprint $table) {
+        Schema::create('price_types', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('parent_id')
-                ->nullable()
-                ->index('idx_parent_category_id')
-                ->constrained('categories')
-                ->onDelete('cascade');
-            $table->string('title');
-            $table->string('slug')
+            $table->string('title')
                 ->unique();
             $table->unsignedInteger('priority')
                 ->default(0);
+
             $table->timestamps();
         });
     }
@@ -32,6 +26,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('categories');
+        Schema::dropIfExists('price_types');
     }
 };

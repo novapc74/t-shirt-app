@@ -39,6 +39,15 @@ use Spatie\Sluggable\SlugOptions;
  * @method static Builder<static>|Category whereParentId($value)
  * @method static Builder<static>|Category whereSlug($value)
  * @method static Builder<static>|Category whereUpdatedAt($value)
+ * @property string $title
+ * @property int $priority
+ * @property-read Collection<int, Category> $childrenRecursive
+ * @property-read int|null $children_recursive_count
+ * @property-read mixed $total_variants_count
+ * @property-read Collection<int, \App\Models\ProductVariant> $variants
+ * @property-read int|null $variants_count
+ * @method static Builder<static>|Category wherePriority($value)
+ * @method static Builder<static>|Category whereTitle($value)
  * @mixin Eloquent
  */
 class Category extends Model
@@ -49,10 +58,12 @@ class Category extends Model
 
     protected $fillable = [
         'parent_id',
-        'name',
+        'title',
         'slug',
         'priority',
     ];
+
+    protected $hidden = ['created_at', 'updated_at'];
 
     /**
      * Настройка автоматической генерации слага
@@ -60,9 +71,9 @@ class Category extends Model
     public function getSlugOptions(): SlugOptions
     {
         return SlugOptions::create()
-            ->generateSlugsFrom('name')
+            ->generateSlugsFrom('title')
             ->saveSlugsTo('slug')
-            ->doNotGenerateSlugsOnUpdate(); // не менять URL, если сменили имя (полезно для SEO)
+            ->doNotGenerateSlugsOnUpdate();
     }
 
     protected static function booted(): void

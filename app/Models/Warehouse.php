@@ -2,40 +2,71 @@
 
 namespace App\Models;
 
-use Database\Factories\WarehouseFactory;
-use Eloquent;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Support\Carbon;
+use Spatie\Sluggable\HasSlug;
+use Spatie\Sluggable\SlugOptions;
 
 /**
  * @property int $id
- * @property string $name
- * @property Carbon|null $created_at
- * @property Carbon|null $updated_at
- * @property-read Collection<int, Stock> $stocks
- * @property-read int|null $stocks_count
- * @method static WarehouseFactory factory($count = null, $state = [])
- * @method static Builder<static>|Warehouse newModelQuery()
- * @method static Builder<static>|Warehouse newQuery()
- * @method static Builder<static>|Warehouse query()
- * @method static Builder<static>|Warehouse whereCreatedAt($value)
- * @method static Builder<static>|Warehouse whereId($value)
- * @method static Builder<static>|Warehouse whereName($value)
- * @method static Builder<static>|Warehouse whereUpdatedAt($value)
- * @mixin Eloquent
+ * @property string $title
+ * @property string $slug
+ * @property string $address
+ * @property int $priority
+ * @property bool $is_active
+ * @property float|null $lat
+ * @property float|null $lng
+ * @property \Illuminate\Support\Carbon|null $created_at
+ * @property \Illuminate\Support\Carbon|null $updated_at
+ * @method static \Database\Factories\WarehouseFactory factory($count = null, $state = [])
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Warehouse newModelQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Warehouse newQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Warehouse query()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Warehouse whereAddress($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Warehouse whereCreatedAt($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Warehouse whereId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Warehouse whereIsActive($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Warehouse whereLat($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Warehouse whereLng($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Warehouse wherePriority($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Warehouse whereSlug($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Warehouse whereTitle($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|Warehouse whereUpdatedAt($value)
+ * @mixin \Eloquent
  */
 class Warehouse extends Model
 {
-    /** @use HasFactory<WarehouseFactory> */
     use HasFactory;
-    protected $fillable = ['name'];
+    use HasSlug;
 
-    public function stocks(): HasMany
+    protected $fillable = [
+        'title',
+        'slug',
+        'priority',
+        'address',
+        'lat',
+        'lng',
+        'is_active',
+    ];
+
+    /**
+     * Настройка автоматической генерации слага
+     */
+    public function getSlugOptions(): SlugOptions
     {
-        return $this->hasMany(Stock::class);
+        return SlugOptions::create()
+            ->generateSlugsFrom('title')
+            ->saveSlugsTo('slug')
+            ->doNotGenerateSlugsOnUpdate();
+    }
+
+    protected function casts(): array
+    {
+        return [
+            'is_active' => 'boolean',
+            'lat' => 'float',
+            'lng' => 'float',
+            'priority' => 'integer',
+        ];
     }
 }

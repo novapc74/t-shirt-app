@@ -10,29 +10,36 @@ return new class extends Migration {
      */
     public function up(): void
     {
-        Schema::create('properties', function (Blueprint $table) {
+        Schema::create('property_values', function (Blueprint $table) {
             $table->id();
-            $table->string('name');
-            $table->string('slug')
-                ->unique();
+
+            $table->foreignId('property_id')
+                ->constrained('properties')
+                ->onDelete('cascade');
+
             $table->foreignId('measure_id')
                 ->nullable()
-                ->index()
-                ->constrained('measures');
+                ->constrained('measures')
+                ->onDelete('set null');
+
+            $table->string('value');
+            $table->string('slug');
             $table->integer('priority')
-                ->default(0)
-                ->index();
+                ->default(0);
 
             $table->timestamps();
+
+            $table->unique(['property_id', 'slug']);
+
+            $table->index('slug');
         });
     }
-
 
     /**
      * Reverse the migrations.
      */
     public function down(): void
     {
-        Schema::dropIfExists('properties');
+        Schema::dropIfExists('property_values');
     }
 };
