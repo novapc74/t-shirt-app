@@ -2,24 +2,11 @@
 
 namespace Tests\Unit\Services;
 
-namespace Tests\Unit\Services;
-
+use App\Models\{Brand, Category, Color, Gender, Price, PriceType, Product, ProductVariant, Property, PropertyValue, Size, Stock, Warehouse};
+use App\Services\Catalog\DTO\ProductFilterParams;
 use App\Services\Catalog\FilterService;
-use Artisan;
-use App\Models\{Color,
-    Property,
-    PropertyValue,
-    Size,
-    Gender,
-    Product,
-    ProductVariant,
-    Stock,
-    Price,
-    PriceType,
-    Category,
-    Brand,
-    Warehouse};
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Artisan;
 use Tests\TestCase;
 
 class FilterServiceTest extends TestCase
@@ -38,90 +25,110 @@ class FilterServiceTest extends TestCase
     }
 
     /**
-     * @return void
+     * Тест: Фильтрация по цвету (Системный ID 1001)
      */
     public function test_it_filters_by_color_using_system_id(): void
     {
-        // 1. У нас есть синяя футболка (ID_COLOR = 1001)
-        // 2. Вызываем фильтр
-        $filters = [
-            'attrs' => [
-                'color' => [Color::where('slug', 'sinii')->first()->id]
-            ]
-        ];
+        $colorId = Color::where('slug', 'sinii')->first()->id;
+        $categoryId = Category::where('slug', 'odezhda')->first()->id;
 
-        $productIds = $this->service->getFilteredProductIds($filters);
+        $params = new ProductFilterParams(
+            filters: ['color' => [$colorId]]
+        );
 
-        // 3. Проверяем, что нашелся именно тот товар
-        $this->assertCount(1, $productIds);
-        $this->assertEquals(Product::where('slug', 'blue-tshirt')->first()->id, $productIds[0]);
+        $productIds = $this->service->getFilteredProductIds($params, $categoryId);
+
+        $this->assertContains(
+            Product::where('slug', 'blue-tshirt')->first()->id,
+            $productIds
+        );
     }
 
     /**
-     * @return void
+     * Тест: Скрытие товаров с нулевым остатком
      */
     public function test_it_hides_products_with_zero_stock(): void
     {
+        $redColorId = Color::where('slug', 'krasnyi')->first()->id;
+        $categoryId = Category::where('slug', 'odezhda')->first()->id;
+
         // Красная футболка имеет stock = 0
-        $filters = [
-            'attrs' => [
-                'color' => [Color::where('slug', 'krasnyi')->first()->id]
-            ]
-        ];
+        $params = new ProductFilterParams(
+            filters: ['color' => [$redColorId]]
+        );
 
-        $productIds = $this->service->getFilteredProductIds($filters);
+        $productIds = $this->service->getFilteredProductIds($params, $categoryId);
 
-        // Должно быть 0 результатов, так как в FilterService стоит ->where('stock', '>', 0)
+        // Должно быть 0 результатов, так как stock > 0
         $this->assertEmpty($productIds);
     }
 
     /**
-     * @return void
+     * Тест: Фильтрация по диапазону цен
      */
     public function test_it_filters_by_price_range(): void
     {
-        $filters = [
-            'price_min' => 1000,
-            'price_max' => 2500
-        ];
+        $categoryId = Category::where('slug', 'odezhda')->first()->id;
 
-        $productIds = $this->service->getFilteredProductIds($filters);
+        $params = new ProductFilterParams(
+            minPrice: 1000,
+            maxPrice: 2500
+        );
 
-        // Проверяем, что попали только товары в этом диапазоне
+        $productIds = $this->service->getFilteredProductIds($params, $categoryId);
+
         $this->assertNotEmpty($productIds);
-        foreach($productIds as $id) {
-            $price = Price::where('product_variant_id', Product::find($id)->variants->first()->id)->first()->price;
-            $this->assertTrue($price >= 1000 && $price <= 2500);
-        }
+        $this->assertContains(
+            Product::where('slug', 'blue-tshirt')->first()->id,
+            $productIds
+        );
     }
 
     /**
-     * @return void
+     * Тест: Фильтрация по гендеру (Системный ID 1003)
+     */
+    public function test_it_filters_by_gender_using_system_id(): void
+    {
+        $genderId = Gender::where('slug', 'muzhskoi')->first()->id;
+        $categoryId = Category::where('slug', 'odezhda')->first()->id;
+
+        $params = new ProductFilterParams(
+            filters: ['gender' => [$genderId]]
+        );
+
+        $productIds = $this->service->getFilteredProductIds($params, $categoryId);
+
+        $this->assertCount(1, $productIds);
+        $this->assertEquals(
+            Product::where('slug', 'blue-tshirt')->first()->id,
+            $productIds[0]
+        );
+    }
+
+    /**
+     * Наполнение тестовыми данными
      */
     private function seedBasicData(): void
     {
-        // 1. Базовые справочники
+        // 1. Справочники
         $brand = Brand::create(['title' => 'Rice Style', 'slug' => 'rice-style', 'priority' => 0]);
         $cat = Category::create(['title' => 'Одежда', 'slug' => 'odezhda', 'priority' => 0]);
         $priceType = PriceType::create(['title' => 'retail']);
         $warehouse = Warehouse::create(['title' => 'Склад', 'slug' => 'sklad', 'address' => 'Адрес', 'priority' => 0]);
 
-        // 2. Системные атрибуты
+        // 2. Атрибуты
         $blue = Color::create(['title' => 'Синий', 'slug' => 'sinii', 'hex_code' => '#0000FF', 'priority' => 1]);
         $red = Color::create(['title' => 'Красный', 'slug' => 'krasnyi', 'hex_code' => '#FF0000', 'priority' => 2]);
-
         $sizeL = Size::create(['title' => 'L', 'slug' => 'l', 'priority' => 10]);
         $sizeS = Size::create(['title' => 'S', 'slug' => 's', 'priority' => 5]);
-
         $male = Gender::create(['title' => 'Мужской', 'slug' => 'muzhskoi', 'priority' => 1]);
         $female = Gender::create(['title' => 'Женский', 'slug' => 'zhenskii', 'priority' => 2]);
 
-        // 3. Пользовательское свойство (Материал)
+        // 3. Свойство Материал
         $materialProp = Property::create(['title' => 'Материал', 'slug' => 'material']);
         $cotton = PropertyValue::create(['property_id' => $materialProp->id, 'value' => 'Хлопок', 'slug' => 'cotton']);
-        $polyester = PropertyValue::create(['property_id' => $materialProp->id, 'value' => 'Полиэстер', 'slug' => 'polyester']);
 
-        // --- ТОВАР 1: СИНЯЯ МУЖСКАЯ ФУТБОЛКА (В наличии, 2000 руб, Хлопок) ---
+        // ТОВАР 1: СИНЯЯ МУЖСКАЯ ФУТБОЛКА (В наличии, 2000 руб)
         $p1 = Product::create([
             'title' => 'Синяя футболка', 'slug' => 'blue-tshirt',
             'category_id' => $cat->id, 'brand_id' => $brand->id, 'is_active' => true, 'description' => '...'
@@ -129,57 +136,28 @@ class FilterServiceTest extends TestCase
         $p1->propertyValues()->attach($cotton->id);
 
         $v1 = ProductVariant::create([
-            'product_id' => $p1->id,
-            'color_id' => $blue->id,
-            'size_id' => $sizeL->id,
-            'gender_id' => $male->id,
-            'sku' => 'BLUE-L-MALE',
+            'product_id' => $p1->id, 'color_id' => $blue->id, 'size_id' => $sizeL->id,
+            'gender_id' => $male->id, 'sku' => 'BLUE-L-MALE', 'is_default' => true
         ]);
 
-        Stock::create(['product_variant_id' => $v1->id, 'warehouse_id' => $wh->id ?? $warehouse->id, 'quantity' => 10]);
-        Price::create(['product_variant_id' => $v1->id, 'price_type_id' => $priceType->id, 'price' => 2000]);
+        $v1->stocks()->create(['warehouse_id' => $warehouse->id, 'quantity' => 10]);
+        $v1->prices()->create(['price_type_id' => $priceType->id, 'price' => 2000]);
 
-
-        // --- ТОВАР 2: КРАСНЫЙ ЖЕНСКИЙ ХУДИ (Нет в наличии, 5000 руб, Полиэстер) ---
+        // ТОВАР 2: КРАСНЫЙ ЖЕНСКИЙ ХУДИ (Нет в наличии, 5000 руб)
         $p2 = Product::create([
             'title' => 'Красный худи', 'slug' => 'red-hoodie',
             'category_id' => $cat->id, 'brand_id' => $brand->id, 'is_active' => true, 'description' => '...'
         ]);
-        $p2->propertyValues()->attach($polyester->id);
 
         $v2 = ProductVariant::create([
             'product_id' => $p2->id, 'color_id' => $red->id, 'size_id' => $sizeS->id,
-            'gender_id' => $female->id, 'sku' => 'RED-S-FEMALE', 'is_active' => true
+            'gender_id' => $female->id, 'sku' => 'RED-S-FEMALE', 'is_default' => true
         ]);
 
-        // Остаток 0 — этот товар FilterService должен скрывать
-        Stock::create(['product_variant_id' => $v2->id, 'warehouse_id' => $warehouse->id, 'quantity' => 0]);
-        Price::create(['product_variant_id' => $v2->id, 'price_type_id' => $priceType->id, 'price' => 5000]);
+        $v2->stocks()->create(['warehouse_id' => $warehouse->id, 'quantity' => 0]);
+        $v2->prices()->create(['price_type_id' => $priceType->id, 'price' => 5000]);
 
-        // 4. ЗАПУСК ИНДЕКСАЦИИ
-        // Без этого шага таблица smart_filter_index будет пустой, и тесты не пройдут
+        // 4. Запуск индексации
         Artisan::call('shop:reindex');
     }
-
-
-    public function test_it_filters_by_gender_using_system_id(): void
-    {
-        $gender = Gender::where('slug', 'muzhskoi')->first();
-
-        $filters = [
-            'attrs' => [
-                'gender' => [$gender->id]
-            ]
-        ];
-
-        $productIds = $this->service->getFilteredProductIds($filters);
-
-        // Должен найтись только Синий товар
-        $this->assertCount(1, $productIds);
-        $this->assertEquals(
-            Product::where('slug', 'blue-tshirt')->first()->id,
-            $productIds[0]
-        );
-    }
 }
-

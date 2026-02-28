@@ -14,42 +14,36 @@ use Illuminate\Http\Resources\Json\JsonResource;
 class ProductResource extends JsonResource
 {
 
+    // app/Http/Resources/ProductResource.php
     public function toArray($request): array
     {
-        $interactiveProps = ['color', 'size', 'gender', 'head_size'];
+        $minPrice = (float) $this->variants->min(function($v) {
+            return $v->prices->first()?->price;
+        });
 
         return [
             'id' => $this->id,
-            'name' => $this->name,
+            'name' => $this->title,
             'slug' => $this->slug,
-            'category_name' => $this->category->name,
-            'min_price' => (float)$this->variants->flatMap->prices->min('amount'),
-
+            'category_name' => $this->category?->title,
+            'min_price' => $minPrice > 0 ? $minPrice : null,
             'variants' => $this->variants->map(fn($v) => [
                 'id' => $v->id,
                 'sku' => $v->sku,
-                'price' => (float)$v->prices->first()?->amount,
+                'price' => (float)$v->prices->first()?->price,
                 'stock' => (int)$v->stocks->sum('quantity'),
-                'properties' => $v->properties->map(fn($p) => [
-                    'group' => $p->property->name,
-                    'value' => $p->value,
-                    'label' => $p->label,
-                    'slug' => $p->property->slug,
-                ]),
+                'attributes' => [
+                    'color'  => (int)$v->color_id,
+                    'size'   => (int)$v->size_id,
+                    'gender' => (int)$v->gender_id,
+                ],
+                'attribute_names' => [
+                    'color'  => $v->color?->title,
+                    'size'   => $v->size?->title,
+                    'gender' => $v->gender?->title,
+                ]
             ]),
-
-            'grouped_specs' => $this->variants->flatMap->properties
-                ->filter(fn($p) => in_array($p->property->slug, $interactiveProps))
-                ->map(fn($p) => [
-                    'group' => $p->property->name,
-                    'slug' => $p->property->slug,
-                    'value' => $p->label ?? $p->value,
-                    'color_hex' => $p->property->slug === 'color' ? $p->value : null,
-                    'priority' => $p->priority
-                ])
-                ->unique(fn($item) => $item['group'] . $item['value'])
-                ->groupBy('group')
-                ->map(fn($options) => $options->sortBy('priority')->values()),
         ];
     }
+
 }

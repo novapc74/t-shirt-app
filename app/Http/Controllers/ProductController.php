@@ -29,14 +29,18 @@ class ProductController extends Controller
 
         return Inertia::render('Catalog/CategoryPage', [
             'category' => $category->name,
-            'price_range' => $data['price_range'],
+            'products' => ProductResource::collection($data['products']),
+
             'filters' => $data['filters'],
             'brands' => $data['brands'],
-            'product_types' => $data['product_types'],
-            'products' => ProductResource::collection($data['products']),
+            'price_range' => $data['price_range'],
+
             'active_filters' => (object)$params->filters,
             'active_brands' => $params->brands,
-            'active_types' => $params->productTypes,
+            'current_price'  => [
+                'min' => $params->minPrice,
+                'max' => $params->maxPrice
+            ],
             'current_sort' => $params->sort
         ]);
     }

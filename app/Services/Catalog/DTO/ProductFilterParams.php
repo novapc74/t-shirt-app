@@ -11,7 +11,7 @@ class ProductFilterParams
         public ?float $minPrice = null,
         public ?float $maxPrice = null,
         public string $sort = 'newest',
-        public ?array $productTypes = [],
+//        public ?array $productTypes = [],
         public ?array $brands = [],
     ) {}
 
@@ -22,7 +22,7 @@ class ProductFilterParams
             minPrice: $request->input('min_price'),
             maxPrice: $request->input('max_price'),
             sort: $request->input('sort', 'newest'),
-            productTypes: (array)$request->input('product_types', []),
+//            productTypes: (array)$request->input('product_types', []),
             brands: (array)$request->input('brands', []),
         );
     }
