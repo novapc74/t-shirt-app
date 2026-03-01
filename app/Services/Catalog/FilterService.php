@@ -57,8 +57,8 @@ class FilterService
      */
     public function getAggregatedAttributes(int $categoryId, array $productIds, ProductFilterParams $params): array
     {
-        // 1. Получаем абсолютно все доступные свойства и их значения для этой категории
-        $allPossibleValues = DB::table('smart_filter_index')
+        // 1. Скелет всех опций
+        $allOptions = DB::table('smart_filter_index')
             ->where('category_id', $categoryId)
             ->where('is_active', true)
             ->where('stock', '>', 0)
@@ -67,32 +67,36 @@ class FilterService
             ->get()
             ->groupBy('property_id');
 
-        return $allPossibleValues->map(function ($items, $propId) use ($params, $categoryId) {
+        // 2. Текущие счетчики (по товарам)
+        $currentCounts = DB::table('smart_filter_index')
+            ->whereIn('product_id', $productIds)
+            ->select('property_id', 'property_value_id', DB::raw('count(distinct product_id) as total'))
+            ->groupBy('property_id', 'property_value_id')
+            ->get()
+            ->keyBy(fn($row) => $row->property_id . '_' . $row->property_value_id);
+
+        return $allOptions->map(function ($items, $propId) use ($categoryId, $params, $currentCounts) {
             $propId = (int)$propId;
-
-            // --- ЛОГИКА ФАСЕТОВ ---
-            // Чтобы "Цвет" не зачеркивал другие "Цвета", нам нужно получить ID товаров,
-            // отфильтрованных всеми фильтрами, КРОМЕ текущего свойства.
-
             $paramsCopy = clone $params;
             $propKey = $this->getPropKeyById($propId);
 
-            if (isset($paramsCopy->filters[$propKey])) {
-                unset($paramsCopy->filters[$propKey]);
-            }
+            $filters = $paramsCopy->filters;
+            unset($filters[$propKey], $filters[(string)$propId], $filters[(int)$propId]);
+            $paramsCopy->filters = $filters;
 
-            // Получаем ID товаров для этой конкретной группы фильтров
-            $idsForGroup = $this->getFilteredProductIds($paramsCopy, $categoryId);
+            // --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+            // Получаем ID ВАРИАНТОВ, которые подходят под остальные фильтры
+            $variantIdsForFacet = $this->getFilteredVariantIds($paramsCopy, $categoryId);
 
-            // Считаем количество только для этих товаров
-            $counts = DB::table('smart_filter_index')
-                ->whereIn('product_id', $idsForGroup)
+            // Теперь смотрим, какие значения свойств есть именно у этих ВАРИАНТОВ
+            $availableValueIds = DB::table('smart_filter_index')
+                ->whereIn('product_variant_id', $variantIdsForFacet)
                 ->where('property_id', $propId)
-                ->select('property_value_id', DB::raw('count(distinct product_id) as total'))
-                ->groupBy('property_value_id')
-                ->pluck('total', 'property_value_id')
+                ->where('stock', '>', 0)
+                ->distinct()
+                ->pluck('property_value_id')
+                ->map(fn($id) => (int)$id)
                 ->toArray();
-            // ----------------------
 
             $valueIds = $items->pluck('property_value_id')->unique();
             $names = $this->loadNamesForProperty($propId, $valueIds);
@@ -100,23 +104,59 @@ class FilterService
             return [
                 'id'    => $propId,
                 'title' => $this->resolvePropertyTitle($propId),
-                'items' => $items->map(function($row) use ($counts, $names) {
+                'items' => $items->map(function($row) use ($currentCounts, $availableValueIds, $names, $propId) {
                     $vId = (int)$row->property_value_id;
-                    $count = (int)($counts[$vId] ?? 0);
+                    $isDisabled = !in_array($vId, $availableValueIds);
 
                     return [
                         'id'       => $vId,
-                        'count'    => $count,
+                        'count'    => (int)($currentCounts[$propId . '_' . $vId]->total ?? 0),
                         'title'    => $names[$vId] ?? 'Unknown',
-                        'disabled' => $count === 0, // Поле для зачеркивания на фронте
+                        'disabled' => $isDisabled,
                     ];
                 })
-                    ->filter(fn($item) => $item['title'] !== 'Unknown')
-                    ->sortBy('title') // Опционально: сортировка внутри фильтра
+                    ->filter(fn($i) => $i['title'] !== 'Unknown')
                     ->values()
             ];
         })->values()->toArray();
     }
+
+    /**
+     * Новый вспомогательный метод для получения ID вариантов
+     */
+    private function getFilteredVariantIds(ProductFilterParams $params, int $categoryId): array
+    {
+        $query = DB::table('smart_filter_index')
+            ->where('category_id', $categoryId)
+            ->where('is_active', true)
+            ->where('stock', '>', 0);
+
+        if (!empty($params->brands)) {
+            $query->whereIn('brand_id', $params->brands);
+        }
+
+        if ($params->minPrice) $query->where('price', '>=', $params->minPrice);
+        if ($params->maxPrice) $query->where('price', '<=', $params->maxPrice);
+
+        if (!empty($params->filters)) {
+            foreach ($params->filters as $key => $values) {
+                $pId = self::SYSTEM_MAP[$key] ?? (int)$key;
+                $values = (array)$values;
+
+                // Важное уточнение: сужаем выборку вариантов по каждому фильтру
+                $query->whereIn('product_variant_id', function ($sub) use ($pId, $values) {
+                    $sub->select('product_variant_id')
+                        ->from('smart_filter_index')
+                        ->where('property_id', $pId)
+                        ->whereIn('property_value_id', $values)
+                        ->where('stock', '>', 0);
+                });
+            }
+        }
+
+        return $query->distinct()->pluck('product_variant_id')->toArray();
+    }
+
 
     /**
      * Вспомогательный метод для определения ключа фильтра

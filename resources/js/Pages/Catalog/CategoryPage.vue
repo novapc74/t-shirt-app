@@ -1,38 +1,45 @@
 <script setup>
 import ProductCard from '@/Components/ProductCard.vue';
-import { ref, watch, computed } from 'vue'
+import { reactive, watch } from 'vue'
 import { router } from '@inertiajs/vue3'
 
 const props = defineProps({
     category: String,
-    filters: Array,       // Группы атрибутов с полями id, title, items (внутри items: id, title, count)
-    brands: Array,        // Список брендов с id, title
+    filters: Array,
+    brands: Array,
     products: Object,
-    active_filters: Object, // Формат { 1001: [5], 1002: [10] } (где ключи - ID свойств)
-    active_brands: Array,   // Массив ID
-    price_range: Object     // { min, max }
+    active_filters: [Object, Array],
+    active_brands: Array,
+    price_range: Object,
+    current_price: Object
 })
 
-// Состояние фильтров (используем ID, так как индекс в БД работает по ID)
-const selectedFilters = ref(props.active_filters || {})
-const selectedBrands = ref(props.active_brands || [])
-
-const minPrice = ref(props.price_range.min)
-const maxPrice = ref(props.price_range.max)
-
-const isSideFilterActive = computed(() => {
-    const hasActiveProps = Object.values(selectedFilters.value).some(arr => Array.isArray(arr) && arr.length > 0);
-    const hasActiveBrands = selectedBrands.value.length > 0;
-    const hasPriceChanged = minPrice.value > props.price_range.min || maxPrice.value < props.price_range.max;
-    return hasActiveProps || hasActiveBrands || hasPriceChanged;
+// Инициализация состояния из пропсов
+const state = reactive({
+    filters: Array.isArray(props.active_filters) ? {} : JSON.parse(JSON.stringify(props.active_filters)),
+    brands: [...props.active_brands],
+    minPrice: props.current_price?.min || props.price_range.min,
+    maxPrice: props.current_price?.max || props.price_range.max
 })
+
+// Синхронизация состояния при обновлении пропсов (ответ от сервера)
+watch(() => props.active_filters, (newVal) => {
+    Object.keys(state.filters).forEach(key => delete state.filters[key]);
+    if (!Array.isArray(newVal)) {
+        Object.assign(state.filters, JSON.parse(JSON.stringify(newVal)));
+    }
+}, { deep: true });
+
+watch(() => props.active_brands, (newVal) => {
+    state.brands = [...newVal];
+}, { deep: true });
 
 const updateFilters = () => {
     router.get(window.location.pathname, {
-        filters: selectedFilters.value, // Улетает в DTO $filters
-        brands: selectedBrands.value,   // Улетает в DTO $brands
-        min_price: minPrice.value,
-        max_price: maxPrice.value,
+        filters: state.filters,
+        brands: state.brands,
+        min_price: state.minPrice,
+        max_price: state.maxPrice,
     }, {
         preserveState: true,
         preserveScroll: true,
@@ -41,21 +48,52 @@ const updateFilters = () => {
 }
 
 const resetFilters = () => {
+    // Сбрасываем локальное состояние
+    Object.keys(state.filters).forEach(key => delete state.filters[key]);
+    state.brands = [];
+    state.minPrice = props.price_range.min;
+    state.maxPrice = props.price_range.max;
+
+    // Делаем чистый запрос без параметров
     router.get(window.location.pathname)
 }
 
-// Хелпер для чекбоксов
 const toggleAttribute = (propId, valueId) => {
-    if (!selectedFilters.value[propId]) {
-        selectedFilters.value[propId] = [];
+    const pId = String(propId);
+    const vId = Number(valueId); // Приводим к числу
+
+    if (!state.filters[pId] || !Array.isArray(state.filters[pId])) {
+        state.filters[pId] = [];
     }
-    const index = selectedFilters.value[propId].indexOf(valueId);
+
+    // КРИТИЧЕСКИЙ МОМЕНТ:
+    // Приводим все элементы текущего массива к числам перед поиском индекса
+    const currentValues = state.filters[pId].map(Number);
+    const index = currentValues.indexOf(vId);
+
     if (index > -1) {
-        selectedFilters.value[propId].splice(index, 1);
+        // Если нашли — удаляем из оригинального массива state
+        state.filters[pId].splice(index, 1);
+
+        if (state.filters[pId].length === 0) {
+            delete state.filters[pId];
+        }
     } else {
-        selectedFilters.value[propId].push(valueId);
+        // Если не нашли — добавляем число
+        state.filters[pId].push(vId);
     }
+
     updateFilters();
+}
+const isChecked = (propId, valueId) => {
+    const pId = String(propId);
+    const vId = Number(valueId);
+
+    if (!state.filters[pId] || !Array.isArray(state.filters[pId])) {
+        return false;
+    }
+
+    return state.filters[pId].map(Number).includes(vId);
 }
 </script>
 
@@ -74,7 +112,7 @@ const toggleAttribute = (propId, valueId) => {
                                 type="checkbox"
                                 class="mr-2 rounded border-gray-300 text-indigo-600 focus:ring-0"
                                 :value="brand.id"
-                                v-model="selectedBrands"
+                                v-model="state.brands"
                                 @change="updateFilters"
                             >
                             <span>{{ brand.title }}</span>
@@ -82,21 +120,7 @@ const toggleAttribute = (propId, valueId) => {
                     </div>
                 </div>
 
-                <!-- БЛОК ЦЕНЫ -->
-                <div class="mb-6 border-b pb-6">
-                    <h3 class="font-bold mb-3 uppercase text-[10px] text-gray-400 tracking-widest">Цена (₽)</h3>
-                    <div class="flex items-center gap-2 mt-4">
-                        <input type="number" v-model.lazy="minPrice" @change="updateFilters"
-                               class="w-full text-xs border-gray-300 rounded focus:ring-indigo-600 p-1.5"
-                               :placeholder="`от ${price_range.min}`">
-                        <span class="text-gray-400 text-xs">—</span>
-                        <input type="number" v-model.lazy="maxPrice" @change="updateFilters"
-                               class="w-full text-xs border-gray-300 rounded focus:ring-indigo-600 p-1.5"
-                               :placeholder="`до ${price_range.max}`">
-                    </div>
-                </div>
-
-                <!-- УМНЫЕ ФИЛЬТРЫ (Цвет, Размер и т.д.) -->
+                <!-- УМНЫЕ ФИЛЬТРЫ -->
                 <div v-for="group in filters" :key="group.id" class="mb-6 border-b pb-4">
                     <h3 class="font-bold mb-3 uppercase text-[10px] text-gray-400 tracking-widest">
                         {{ group.title }}
@@ -104,21 +128,30 @@ const toggleAttribute = (propId, valueId) => {
                     <div v-for="item in group.items" :key="item.id" class="flex items-center mb-2">
                         <label
                             :class="[
-                                'flex items-center cursor-pointer text-sm transition-all',
-                                item.count > 0 ? 'text-gray-800 hover:text-indigo-600' : 'text-gray-300 cursor-not-allowed opacity-40'
-                            ]"
+            'flex items-center text-sm transition-all w-full',
+            // Блокируем ТОЛЬКО если disabled пришел true от сервера
+            (item.disabled && !isChecked(group.id, item.id))
+                ? 'opacity-30 cursor-not-allowed pointer-events-none'
+                : 'text-gray-800 hover:text-indigo-600 cursor-pointer'
+        ]"
                         >
                             <input
                                 type="checkbox"
-                                class="mr-2 rounded border-gray-300 text-indigo-600 focus:ring-0 disabled:opacity-20"
-                                :disabled="item.count === 0"
-                                :checked="selectedFilters[group.id]?.includes(item.id)"
+                                class="mr-2 rounded border-gray-300 text-indigo-600 focus:ring-0"
+                                :disabled="item.disabled && !isChecked(group.id, item.id)"
+                                :checked="isChecked(group.id, item.id)"
                                 @change="toggleAttribute(group.id, item.id)"
                             >
-                            <span :class="{'line-through': item.count === 0}">{{ item.title }}</span>
-                            <span class="ml-1 text-[10px] text-gray-400">({{ item.count }})</span>
+                            <!-- Текст зачеркиваем тоже только по флагу disabled -->
+                            <span :class="{ 'line-through opacity-50': item.disabled && !isChecked(group.id, item.id) }">
+            {{ item.title }}
+        </span>
+                            <span class="ml-auto text-[10px] text-gray-400">
+            ({{ item.count }})
+        </span>
                         </label>
                     </div>
+
                 </div>
 
                 <button @click="resetFilters" class="text-[10px] font-black uppercase tracking-tighter text-indigo-600 hover:underline">
@@ -132,12 +165,11 @@ const toggleAttribute = (propId, valueId) => {
                         v-for="product in products.data"
                         :key="product.id"
                         :product="product"
-                        :active-filters="selectedFilters"
-                        :is-side-filter-active="isSideFilterActive"
+                        :active-filters="state.filters"
                     />
                 </div>
                 <div v-else class="text-center py-20 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200">
-                    <p class="text-gray-400 font-medium font-bold uppercase tracking-widest">Товары не найдены</p>
+                    <p class="text-gray-400 font-bold uppercase tracking-widest">Товары не найдены</p>
                     <button @click="resetFilters" class="mt-2 text-indigo-600 underline text-xs font-bold uppercase">Очистить фильтры</button>
                 </div>
             </main>
