@@ -22,8 +22,7 @@ class PriceFactory extends Factory
         return [
             'product_variant_id' => ProductVariant::factory(),
             'price_type_id' => PriceType::factory(),
-            'amount' => $this->faker->numberBetween(1, 100),
-            'currency' => $this->faker->currencyCode(),
+            'price' => $this->faker->numberBetween(1, 100),
         ];
     }
 }

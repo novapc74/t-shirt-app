@@ -13,8 +13,6 @@ use Illuminate\Http\Resources\Json\JsonResource;
  */
 class ProductResource extends JsonResource
 {
-
-    // app/Http/Resources/ProductResource.php
     public function toArray($request): array
     {
         $minPrice = (float) $this->variants->min(function($v) {
@@ -27,6 +25,7 @@ class ProductResource extends JsonResource
             'slug' => $this->slug,
             'category_name' => $this->category?->title,
             'min_price' => $minPrice > 0 ? $minPrice : null,
+            'brand' => $this->brand->title ?? null,
             'variants' => $this->variants->map(fn($v) => [
                 'id' => $v->id,
                 'sku' => $v->sku,

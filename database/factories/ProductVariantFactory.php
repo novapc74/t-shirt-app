@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\Models\Color;
 use App\Models\Product;
 use App\Models\ProductVariant;
 use Illuminate\Database\Eloquent\Factories\Factory;
@@ -20,6 +21,7 @@ class ProductVariantFactory extends Factory
     {
         return [
             'product_id' => Product::factory(),
+            'color_id' => Color::factory(),
             'sku' => strtoupper($this->faker->unique()->bothify('TSHIRT-##??')),
         ];
     }

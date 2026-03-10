@@ -28,6 +28,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class PriceType extends Model
 {
     use HasFactory;
+    public const RETAIL_PRICE_TYPE = 1;
 
     protected $fillable = [
         'title',

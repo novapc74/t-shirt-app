@@ -6,24 +6,46 @@ use Illuminate\Http\Request;
 
 class ProductFilterParams
 {
-    public function __construct(
-        public array $filters = [],
-        public ?float $minPrice = null,
-        public ?float $maxPrice = null,
-        public string $sort = 'newest',
-//        public ?array $productTypes = [],
-        public ?array $brands = [],
-    ) {}
+    private bool $isOrStrategy = true;
+
+    public function __construct(private readonly array $filters = [], private readonly string $sort = 'newest')
+    {
+        $i = 0;
+        foreach ($this->filters as $values) {
+            if (!empty($values)) {
+                $i++;
+            }
+            if ($i > 1) {
+                $this->isOrStrategy = false;
+                break;
+            }
+        }
+    }
 
     public static function fromRequest(Request $request): self
     {
         return new self(
-            filters: (array)$request->input('filters', []),
-            minPrice: $request->input('min_price'),
-            maxPrice: $request->input('max_price'),
-            sort: $request->input('sort', 'newest'),
-//            productTypes: (array)$request->input('product_types', []),
-            brands: (array)$request->input('brands', []),
+            (array)$request->input('filters', []),
+            (string)$request->input('sort', 'newest')
         );
+    }
+
+    public function isOrStrategy(): bool
+    {
+        return $this->isOrStrategy;
+    }
+
+    public function getFilters(string $key = null): array
+    {
+        if ($key === null) {
+            return $this->filters;
+        }
+
+        return $this->filters[$key] ?? [];
+    }
+
+    public function getSort(): string
+    {
+        return $this->sort;
     }
 }

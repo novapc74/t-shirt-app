@@ -2,222 +2,242 @@
 
 namespace App\Services\Catalog;
 
-use App\Models\{Color, Size, Gender, Property, PropertyValue, Brand};
-use App\Services\Catalog\DTO\ProductFilterParams;
+use App\Models\PriceType;
 use Illuminate\Support\Facades\DB;
 
 class FilterService
 {
-    protected const SYSTEM_MAP = [
-        'color' => Color::SMART_FILTER_ID,
-        'size' => Size::SMART_FILTER_ID,
-        'gender' => Gender::SMART_FILTER_ID,
-    ];
+    private array $queryParams = [];
+    private array $cteParts = [];
+    private bool $hasPriceFilter = false;
+    private array $facetTypes = ['brand', 'color', 'size', 'prop_val', 'gender'];
 
-    /**
-     * Поиск ID товаров по индексу
-     */
-    public function getFilteredProductIds(ProductFilterParams $params, int $categoryId): array
+    public function getCatalogData(int $categoryId, array $filters = [], bool $isOrStrategy = false): array
     {
-        $query = DB::table('smart_filter_index')
-            ->where('category_id', $categoryId)
-            ->where('is_active', true)
-            ->where('stock', '>', 0);
+        $this->queryParams = [];
+        $this->cteParts = [];
+        $activeFilters = array_filter($filters, fn($v) => !empty($v));
 
-        // Фильтр по брендам
-        if (!empty($params->brands)) {
-            $query->whereIn('brand_id', $params->brands);
+        // 1. Базовый вектор категории
+        $this->addCategoryVectorAsCte($categoryId);
+
+        // 2. Подготовка CTE для активных фильтров
+        $this->addPriceFilterAsCte($activeFilters);
+        $this->addOtherFilterPropertiesAsCte($activeFilters);
+
+        // 3. Сборка SQL для счетчиков (фасетов)
+        $unionFacets = $this->solveAllFacetsSql($activeFilters);
+
+        // Полное пересечение (для товаров)
+        $finalIdsIntersect = $this->buildIntersection($activeFilters, null, $isOrStrategy);
+        // Пересечение без учета самой цены (для ползунка)
+        $priceScope = $this->buildIntersection($activeFilters, 'price');
+
+        $cteSql = $this->solveCteParts();
+
+        // 4. Формирование финального SQL
+        $finalSql = <<<EOL
+        $cteSql
+        SELECT
+            ($finalIdsIntersect) as ids,
+            (SELECT json_build_object(
+                'min', COALESCE(MIN(p.price), 0),
+                'max', COALESCE(MAX(p.price), 0))
+            FROM prices p
+            JOIN product_variants pv ON p.product_variant_id = pv.id
+            WHERE pv.product_id = ANY(($priceScope)::int[])
+                AND p.price_type_id = :price_type
+            ) as price_range,
+            (SELECT json_object_agg(f_type, f_data)
+            FROM (
+                SELECT f_type, json_object_agg(entity_id, cnt) as f_data
+                FROM (
+                    SELECT f_type, entity_id, cnt
+                    FROM ($unionFacets) t
+                    WHERE cnt > 0
+                ) f_inner
+                GROUP BY f_type
+            ) f_outer
+            ) as facets
+        EOL;
+
+        $this->queryParams['price_type'] = PriceType::RETAIL_PRICE_TYPE;
+        $result = DB::selectOne($finalSql, $this->queryParams);
+
+        return [
+            'ids' => $this->parsePgArray($result->ids ?? ''),
+            'facets' => json_decode($result->facets ?? '{}', true),
+            'price_range' => json_decode($result->price_range ?? '{"min":0,"max":0}', true),
+        ];
+    }
+
+    private function solveAllFacetsSql(?array $activeFilters = []): string
+    {
+        $allFacetsSql = [];
+        foreach ($this->facetTypes as $type) {
+            $scopeSql = $this->buildIntersection($activeFilters, $type);
+
+            // Пересекаем товары (product_ids & scope), разворачиваем их в строки (unnest)
+            // и считаем количество связанных с ними вариантов в таблице product_variants
+            $allFacetsSql[] = <<<SQL
+SELECT
+    '$type' AS f_type,
+    fv.entity_id,
+    (
+        SELECT COUNT(*)
+        FROM product_variants pv
+        WHERE pv.product_id = ANY(fv.product_ids & ($scopeSql))
+    ) AS cnt
+FROM filter_vectors fv
+WHERE fv.entity_type = '$type'
+SQL;
         }
 
-        // Фильтр по цене
-        if ($params->minPrice) $query->where('price', '>=', $params->minPrice);
-        if ($params->maxPrice) $query->where('price', '<=', $params->maxPrice);
+        return implode("\nUNION ALL\n", $allFacetsSql);
+    }
 
-        // Динамические атрибуты (Пересечение множеств)
-        if (!empty($params->filters)) {
-            foreach ($params->filters as $key => $values) {
-                $propId = self::SYSTEM_MAP[$key] ?? (int)$key;
-                $values = (array)$values;
 
-                $query->whereIn('product_variant_id', function ($sub) use ($propId, $values) {
-                    $sub->select('product_variant_id')
-                        ->from('smart_filter_index')
-                        ->where('property_id', $propId)
-                        ->whereIn('property_value_id', $values)
-                        ->where('stock', '>', 0);
-                });
+//    private function solveAllFacetsSql(?array $activeFilters = []): string
+//    {
+//        $allFacetsSql = [];
+//        foreach ($this->facetTypes as $type) {
+//            $scopeSql = $this->buildIntersection($activeFilters, $type);
+//            $allFacetsSql[] = <<<SQL
+//SELECT
+//    '$type' AS f_type,
+//    entity_id, icount(product_ids & ($scopeSql)) AS cnt
+//FROM filter_vectors
+//WHERE entity_type = '$type'
+//SQL;
+//        }
+//
+//        return implode("\nUNION ALL\n", $allFacetsSql);
+//    }
+
+    /**
+     * Логика пересечения векторов (&).
+     * Если передан $excludeType, фильтры этой группы игнорируются.
+     * Это позволяет видеть все доступные бренды, даже если один из них выбран.
+     */
+    private function buildIntersection(
+        ?array $activeFilters = [],
+        ?string $excludeType = null,
+        bool $isOrStrategy = false
+    ): string {
+        // Категория — это базис, она всегда обязательна (AND)
+        $categoryPart = "(SELECT product_ids FROM cat_v)";
+
+        $filterParts = [];
+
+        // Добавляем цену
+        if ($this->hasPriceFilter && $excludeType !== 'price') {
+            $filterParts[] = "(SELECT v FROM price_v)";
+        }
+
+        // Добавляем остальные активные фильтры
+        foreach ($activeFilters as $type => $value) {
+            if ($type !== 'price' && $type !== $excludeType && in_array($type, $this->facetTypes)) {
+                $filterParts[] = "(SELECT v FROM {$type}_v)";
             }
         }
 
-        return $query->distinct()->pluck('product_id')->toArray();
-    }
-
-    /**
-     * Сбор доступных опций фильтрации (цвета, размеры и т.д.) с количеством товаров
-     */
-    public function getAggregatedAttributes(int $categoryId, array $productIds, ProductFilterParams $params): array
-    {
-        // 1. Скелет всех опций
-        $allOptions = DB::table('smart_filter_index')
-            ->where('category_id', $categoryId)
-            ->where('is_active', true)
-            ->where('stock', '>', 0)
-            ->select('property_id', 'property_value_id')
-            ->distinct()
-            ->get()
-            ->groupBy('property_id');
-
-        // 2. Текущие счетчики (по товарам)
-        $currentCounts = DB::table('smart_filter_index')
-            ->whereIn('product_id', $productIds)
-            ->select('property_id', 'property_value_id', DB::raw('count(distinct product_id) as total'))
-            ->groupBy('property_id', 'property_value_id')
-            ->get()
-            ->keyBy(fn($row) => $row->property_id . '_' . $row->property_value_id);
-
-        return $allOptions->map(function ($items, $propId) use ($categoryId, $params, $currentCounts) {
-            $propId = (int)$propId;
-            $paramsCopy = clone $params;
-            $propKey = $this->getPropKeyById($propId);
-
-            $filters = $paramsCopy->filters;
-            unset($filters[$propKey], $filters[(string)$propId], $filters[(int)$propId]);
-            $paramsCopy->filters = $filters;
-
-            // --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-            // Получаем ID ВАРИАНТОВ, которые подходят под остальные фильтры
-            $variantIdsForFacet = $this->getFilteredVariantIds($paramsCopy, $categoryId);
-
-            // Теперь смотрим, какие значения свойств есть именно у этих ВАРИАНТОВ
-            $availableValueIds = DB::table('smart_filter_index')
-                ->whereIn('product_variant_id', $variantIdsForFacet)
-                ->where('property_id', $propId)
-                ->where('stock', '>', 0)
-                ->distinct()
-                ->pluck('property_value_id')
-                ->map(fn($id) => (int)$id)
-                ->toArray();
-
-            $valueIds = $items->pluck('property_value_id')->unique();
-            $names = $this->loadNamesForProperty($propId, $valueIds);
-
-            return [
-                'id'    => $propId,
-                'title' => $this->resolvePropertyTitle($propId),
-                'items' => $items->map(function($row) use ($currentCounts, $availableValueIds, $names, $propId) {
-                    $vId = (int)$row->property_value_id;
-                    $isDisabled = !in_array($vId, $availableValueIds);
-
-                    return [
-                        'id'       => $vId,
-                        'count'    => (int)($currentCounts[$propId . '_' . $vId]->total ?? 0),
-                        'title'    => $names[$vId] ?? 'Unknown',
-                        'disabled' => $isDisabled,
-                    ];
-                })
-                    ->filter(fn($i) => $i['title'] !== 'Unknown')
-                    ->values()
-            ];
-        })->values()->toArray();
-    }
-
-    /**
-     * Новый вспомогательный метод для получения ID вариантов
-     */
-    private function getFilteredVariantIds(ProductFilterParams $params, int $categoryId): array
-    {
-        $query = DB::table('smart_filter_index')
-            ->where('category_id', $categoryId)
-            ->where('is_active', true)
-            ->where('stock', '>', 0);
-
-        if (!empty($params->brands)) {
-            $query->whereIn('brand_id', $params->brands);
+        if (empty($filterParts)) {
+            return $categoryPart;
         }
 
-        if ($params->minPrice) $query->where('price', '>=', $params->minPrice);
-        if ($params->maxPrice) $query->where('price', '<=', $params->maxPrice);
+        // Определяем оператор между фильтрами
+        $operator = $isOrStrategy ? ' | ' : ' & ';
 
-        if (!empty($params->filters)) {
-            foreach ($params->filters as $key => $values) {
-                $pId = self::SYSTEM_MAP[$key] ?? (int)$key;
-                $values = (array)$values;
+        // Склеиваем фильтры между собой выбранной стратегией
+        $filtersCombined = implode($operator, $filterParts);
 
-                // Важное уточнение: сужаем выборку вариантов по каждому фильтру
-                $query->whereIn('product_variant_id', function ($sub) use ($pId, $values) {
-                    $sub->select('product_variant_id')
-                        ->from('smart_filter_index')
-                        ->where('property_id', $pId)
-                        ->whereIn('property_value_id', $values)
-                        ->where('stock', '>', 0);
-                });
+        // ВАЖНО: Результат фильтров всегда пересекаем (&) с категорией
+        return "($categoryPart & ($filtersCombined))";
+    }
+
+
+    private function solveCteParts(): string
+    {
+        return empty($this->cteParts) ? "" : "WITH ".implode(",\n", $this->cteParts);
+    }
+
+    private function addCategoryVectorAsCte(int $categoryId): void
+    {
+        $this->queryParams['cat_id'] = $categoryId;
+
+        $ctePart = <<<EOL
+cat_v AS (SELECT product_ids FROM filter_vectors WHERE entity_type = 'category' AND entity_id = :cat_id)
+EOL;
+        $this->addCtePart($ctePart);
+    }
+
+    private function addPriceFilterAsCte(array $activeFilters): void
+    {
+        $min = $activeFilters['price']['min'] ?? null;
+        $max = $activeFilters['price']['max'] ?? null;
+
+        if (!$min && !$max) {
+            return;
+        }
+
+        $this->hasPriceFilter = true;
+        $this->queryParams['price_type'] = PriceType::RETAIL_PRICE_TYPE;
+        $condition = ["p.price_type_id = :price_type"];
+
+        if ($min) {
+            $condition[] = "p.price >= :min_price";
+            $this->queryParams['min_price'] = (float)$min;
+        }
+
+        if ($max) {
+            $condition[] = "p.price <= :max_price";
+            $this->queryParams['max_price'] = (float)$max;
+        }
+
+        $conditions = implode(" AND ", $condition);
+        $ctePart = <<<SQL
+price_v AS (
+    SELECT public.sort(public.uniq(array_agg(DISTINCT pv.product_id)::int[])) as v
+    FROM prices p
+    JOIN product_variants pv ON p.product_variant_id = pv.id
+    WHERE $conditions)
+SQL;
+
+        $this->addCtePart($ctePart);
+    }
+
+    private function addOtherFilterPropertiesAsCte(array $activeFilters): void
+    {
+        foreach ($activeFilters as $type => $ids) {
+            if ($type === 'price' || !in_array($type, $this->facetTypes)) {
+                continue;
             }
+
+            $paramName = "ids_$type";
+            $this->queryParams[$paramName] = '{'.implode(',', array_map('intval', (array)$ids)).'}';
+
+            $ctePart = <<<SQL
+{$type}_v AS (
+    SELECT public.sort(public.uniq(array_agg(el::int)::int[])) as v
+    FROM filter_vectors, unnest(product_ids) el
+    WHERE entity_type = '$type' AND entity_id = ANY(CAST(:$paramName AS int[])))
+SQL;
+
+            $this->addCtePart($ctePart);
+        }
+    }
+
+    private function parsePgArray(?string $pgArray): array
+    {
+        if (!$pgArray || $pgArray === '{}') {
+            return [];
         }
 
-        return $query->distinct()->pluck('product_variant_id')->toArray();
+        return array_map('intval', explode(',', trim($pgArray, '{}')));
     }
 
-
-    /**
-     * Вспомогательный метод для определения ключа фильтра
-     */
-    private function getPropKeyById(int $propId): string
+    private function addCtePart(string $ctePart): void
     {
-        $map = array_flip(self::SYSTEM_MAP);
-        return $map[$propId] ?? (string)$propId;
-    }
-
-
-
-    private function loadNamesForProperty(int $propId, $valueIds): array
-    {
-        return match($id = (int)$propId) {
-            \App\Models\Color::SMART_FILTER_ID  => \App\Models\Color::whereIn('id', $valueIds)->pluck('title', 'id')->toArray(),
-            \App\Models\Size::SMART_FILTER_ID   => \App\Models\Size::whereIn('id', $valueIds)->pluck('title', 'id')->toArray(),
-            \App\Models\Gender::SMART_FILTER_ID => \App\Models\Gender::whereIn('id', $valueIds)->pluck('title', 'id')->toArray(),
-            default => \App\Models\PropertyValue::whereIn('id', $valueIds)->where('property_id', $id)->pluck('value', 'id')->toArray(),
-        };
-    }
-
-
-    public function getPriceRange(int $categoryId): array
-    {
-        $data = DB::table('smart_filter_index')
-            ->where('category_id', $categoryId)
-            ->selectRaw('MIN(price) as min, MAX(price) as max')
-            ->first();
-
-        return ['min' => (float)($data->min ?? 0), 'max' => (float)($data->max ?? 0)];
-    }
-
-    public function getAvailableBrands(int $categoryId, array $productIds): array
-    {
-        return Brand::whereIn('id', function ($q) use ($categoryId, $productIds) {
-            $q->select('brand_id')->from('smart_filter_index')
-                ->where('category_id', $categoryId)
-                ->whereIn('product_id', $productIds);
-        })->get(['id', 'title', 'slug'])->toArray();
-    }
-
-    private function resolvePropertyTitle(int $id): string
-    {
-        return match ($id) {
-            Color::SMART_FILTER_ID => 'Цвет',
-            Size::SMART_FILTER_ID => 'Размер',
-            Gender::SMART_FILTER_ID => 'Пол',
-            default => Property::find($id)?->title ?? 'Свойство'
-        };
-    }
-
-    private function loadAttributeNames($ids): array
-    {
-        // Собираем имена из разных таблиц (можно закешировать)
-        $pValues = PropertyValue::whereIn('id', $ids)->pluck('value', 'id');
-        $colors = Color::whereIn('id', $ids)->pluck('title', 'id');
-        $sizes = Size::whereIn('id', $ids)->pluck('title', 'id');
-        $genders = Gender::whereIn('id', $ids)->pluck('title', 'id');
-
-        return ($pValues->toArray() + $colors->toArray() + $sizes->toArray() + $genders->toArray());
+        $this->cteParts[] = $ctePart;
     }
 }
-

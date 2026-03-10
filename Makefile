@@ -15,8 +15,9 @@ build-dev:
 	./vendor/bin/sail npm run dev &
 
 build-prod:
+	rm -f public/hot
 	./vendor/bin/sail npm install --legacy-peer-deps
-	./vendor/bin/sail npm run build &
+	./vendor/bin/sail npm run build
 
 # создание коанд name=your-command-name
 command-create:

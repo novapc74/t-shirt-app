@@ -5,8 +5,12 @@ namespace Tests\Feature\Model;
 use Tests\TestCase;
 use App\Models\Price;
 use App\Models\Stock;
+use App\Models\Color;
+use App\Models\Size;
+use App\Models\Gender;
 use App\Models\Product;
 use App\Models\Property;
+use App\Models\PropertyValue;
 use App\Models\ProductVariant;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -16,62 +20,66 @@ class ProductVariantTest extends TestCase
     use RefreshDatabase;
 
     /**
-     * TEST 1 - Проверка создания варианта и привязки свойств.
+     * TEST 1 - Проверка системных свойств варианта (Цвет, Размер, Гендер).
      */
-    public function test_it_can_store_and_retrieve_properties(): void
+    public function test_it_has_system_properties(): void
     {
-        $property = Property::create([
-            'name' => 'Цвет',
-            'slug' => 'color'
+        $color = Color::create(['title' => 'Черный', 'slug' => 'black', 'hex_code' => '#000', 'priority' => 0]);
+        $size = Size::create(['title' => 'XL', 'slug' => 'xl', 'priority' => 10]);
+        $gender = Gender::create(['title' => 'Мужской', 'slug' => 'male', 'priority' => 0]);
+
+        $variant = ProductVariant::factory()->create([
+            'color_id' => $color->id,
+            'size_id' => $size->id,
+            'gender_id' => $gender->id,
         ]);
 
-        $variant = ProductVariant::factory()->create();
-
-        $variant->properties()->create([
-            'property_id' => $property->id,
-            'value' => 'Красный'
-        ]);
-
-        $this->assertCount(1, $variant->properties);
-        $this->assertEquals('Красный', $variant->properties->first()->value);
-        $this->assertEquals('Цвет', $variant->properties->first()->property->name);
+        $this->assertEquals('Черный', $variant->color->title);
+        $this->assertEquals('XL', $variant->size->title);
+        $this->assertEquals('Мужской', $variant->gender->title);
     }
 
     /**
-     * TEST 2 - Проверка фильтрации по значению свойства.
+     * TEST 2 - Проверка доступа к свойствам родительского товара.
      */
-    public function test_it_can_filter_variants_by_properties(): void
+    public function test_it_can_access_parent_product_properties(): void
     {
-        $color = Property::create([
-            'name' => 'Цвет',
-            'slug' => 'color'
+        $product = Product::factory()->create();
+        $property = Property::create(['title' => 'Материал', 'slug' => 'material', 'priority' => 0]);
+        $value = PropertyValue::create([
+            'property_id' => $property->id,
+            'value' => 'Хлопок 100%',
+            'slug' => 'cotton'
         ]);
 
-        // Вариант 1 - Красный
-        $redVariant = ProductVariant::factory()->create();
-        $redVariant->properties()->create([
-            'property_id' => $color->id,
-            'value' => 'Red'
-        ]);
+        // Привязываем свойство к продукту (через таблицу product_properties)
+        $product->propertyValues()->attach($value->id);
 
-        // Вариант 2 - Синий
-        $blueVariant = ProductVariant::factory()->create();
-        $blueVariant->properties()->create([
-            'property_id' => $color->id,
-            'value' => 'Blue'
-        ]);
+        $variant = ProductVariant::factory()->create(['product_id' => $product->id]);
 
-        // Ищем через whereHas (стандартный способ Laravel для связей)
-        $results = ProductVariant::whereHas('properties', function ($query) {
-            $query->where('value', 'Red');
-        })->get();
+        $this->assertCount(1, $variant->product->propertyValues);
+        $this->assertEquals('Хлопок 100%', $variant->product->propertyValues->first()->value);
+    }
+
+    /**
+     * TEST 3 - Проверка фильтрации вариантов по системным свойствам.
+     */
+    public function test_it_can_filter_variants_by_system_properties(): void
+    {
+        $black = Color::create(['title' => 'Black', 'slug' => 'black', 'hex_code' => '#000', 'priority' => 0]);
+        $white = Color::create(['title' => 'White', 'slug' => 'white', 'hex_code' => '#fff', 'priority' => 0]);
+
+        ProductVariant::factory()->create(['color_id' => $black->id]);
+        ProductVariant::factory()->create(['color_id' => $white->id]);
+
+        $results = ProductVariant::where('color_id', $black->id)->get();
 
         $this->assertCount(1, $results);
-        $this->assertEquals($redVariant->id, $results->first()->id);
+        $this->assertEquals($black->id, $results->first()->color_id);
     }
 
     /**
-     * TEST 3 - Проверка уникальности SKU.
+     * TEST 4 - Проверка уникальности SKU.
      */
     public function test_it_enforces_unique_sku(): void
     {
@@ -83,54 +91,39 @@ class ProductVariantTest extends TestCase
     }
 
     /**
-     * TEST 4 - Проверка всех связей (Product, Prices, Stocks, Properties).
+     * TEST 5 - Проверка связей с ценами и остатками.
      */
-    public function test_it_has_correct_relations(): void
+    public function test_it_has_prices_and_stocks_relations(): void
     {
         $variant = ProductVariant::factory()
             ->has(Price::factory()->count(2))
             ->has(Stock::factory()->count(1))
             ->create();
 
-        $property = Property::create([
-            'name' => 'Размер',
-            'slug' => 'size'
-        ]);
-
-        $variant->properties()->create([
-            'property_id' => $property->id,
-            'value' => 'XL'
-        ]);
-
         $this->assertInstanceOf(Product::class, $variant->product);
         $this->assertCount(2, $variant->prices);
         $this->assertCount(1, $variant->stocks);
-        $this->assertCount(1, $variant->properties);
     }
 
     /**
-     * TEST 5 - Фильтрация по нескольким значениям.
+     * TEST 6 - Поиск варианта через свойства продукта (Материал).
      */
-    public function test_it_can_filter_by_multiple_property_values(): void
+    public function test_it_can_be_found_by_product_properties(): void
     {
-        $size = Property::create([
-            'name' => 'Размер',
-            'slug' => 'size'
-        ]);
+        $property = Property::create(['title' => 'Материал', 'slug' => 'material', 'priority' => 0]);
+        $cotton = PropertyValue::create(['property_id' => $property->id, 'value' => 'Cotton', 'slug' => 'cotton']);
 
-        foreach (['S', 'M', 'L'] as $value) {
-            $variant = ProductVariant::factory()->create();
-            $variant->properties()->create([
-                'property_id' => $size->id,
-                'value' => $value
-            ]);
-        }
+        $product = Product::factory()->create();
+        $product->propertyValues()->attach($cotton->id);
 
-        // Ищем варианты с размером S или L
-        $results = ProductVariant::whereHas('properties',
-            fn($query) => $query->where('property_id', $size->id)->whereIn('value', ['S', 'L'])
-        )->get();
+        $variant = ProductVariant::factory()->create(['product_id' => $product->id]);
 
-        $this->assertCount(2, $results);
+        // Ищем вариант товара, у которого продукт сделан из хлопка
+        $results = ProductVariant::whereHas('product.propertyValues', function ($query) use ($cotton) {
+            $query->where('property_values.id', $cotton->id);
+        })->get();
+
+        $this->assertCount(1, $results);
+        $this->assertEquals($variant->id, $results->first()->id);
     }
 }
