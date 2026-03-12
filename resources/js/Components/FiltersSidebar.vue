@@ -146,9 +146,9 @@ const handlePrice = (type, val) => {
                                 </div>
 
                                 <!-- Цвет (Индикатор) -->
-                                <div v-if="group.slug === 'color' && val.hex"
+                                <div v-if="group.slug === 'color' && val.hex_code"
                                      class="w-3 h-3 rounded-full ring-1 ring-slate-100 ring-offset-1 shrink-0"
-                                     :style="{ backgroundColor: val.hex }"
+                                     :style="{ backgroundColor: val.hex_code }"
                                 ></div>
 
                                 <span :class="[

@@ -3,7 +3,7 @@
 namespace Tests\Unit\Services;
 
 use App\Models\{Brand, Category, Color, Gender, Price, PriceType, Product, ProductVariant, Property, PropertyValue, Size, Stock, Warehouse};
-use App\Services\Catalog\DTO\ProductFilterParams;
+use App\Services\Catalog\DTO\CatalogFilterRequestDto;
 use App\Services\Catalog\FilterService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
@@ -32,7 +32,7 @@ class FilterServiceTest extends TestCase
         $colorId = Color::where('slug', 'sinii')->first()->id;
         $categoryId = Category::where('slug', 'odezhda')->first()->id;
 
-        $params = new ProductFilterParams(
+        $params = new CatalogFilterRequestDto(
             filters: ['color' => [$colorId]]
         );
 
@@ -53,7 +53,7 @@ class FilterServiceTest extends TestCase
         $categoryId = Category::where('slug', 'odezhda')->first()->id;
 
         // Красная футболка имеет stock = 0
-        $params = new ProductFilterParams(
+        $params = new CatalogFilterRequestDto(
             filters: ['color' => [$redColorId]]
         );
 
@@ -70,7 +70,7 @@ class FilterServiceTest extends TestCase
     {
         $categoryId = Category::where('slug', 'odezhda')->first()->id;
 
-        $params = new ProductFilterParams(
+        $params = new CatalogFilterRequestDto(
             minPrice: 1000,
             maxPrice: 2500
         );
@@ -92,7 +92,7 @@ class FilterServiceTest extends TestCase
         $genderId = Gender::where('slug', 'muzhskoi')->first()->id;
         $categoryId = Category::where('slug', 'odezhda')->first()->id;
 
-        $params = new ProductFilterParams(
+        $params = new CatalogFilterRequestDto(
             filters: ['gender' => [$genderId]]
         );
 
