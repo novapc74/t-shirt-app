@@ -21,7 +21,7 @@ class StoreCategoryRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'name' => ['required', 'string', 'max:255'],
+            'title' => ['required', 'unique:categories,title', 'string', 'max:255'],
             'parent_id' => [
                 'nullable',
                 'integer',
@@ -45,8 +45,9 @@ class StoreCategoryRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'name.required' => 'Укажите название категории.',
-            'name.max'      => 'Название слишком длинное (максимум 255 символов).',
+            'title.required' => 'Укажите название категории.',
+            'title.max'      => 'Название слишком длинное (максимум 255 символов).',
+            'title.unique' => 'Категория с таким именем уже существует.',
             'parent_id.exists' => 'Выбранная родительская категория не найдена в базе данных.',
             'parent_id.integer' => 'Идентификатор родительской категории должен быть числом.',
         ];
@@ -58,7 +59,7 @@ class StoreCategoryRequest extends FormRequest
     public function attributes(): array
     {
         return [
-            'name'      => 'название категории',
+            'title'      => 'название категории',
             'parent_id' => 'родительская категория',
         ];
     }

@@ -10,32 +10,15 @@ use App\Http\Requests\StoreCategoryRequest;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Validation\Validator as ValidationValidator;
 
-
 class StoreCategoryRequestTest extends TestCase
 {
     use RefreshDatabase;
 
-    /**
-     * Быстрая проверка: проходит валидация или нет.
-     */
-    private function validate(array $data): bool
-    {
-        return $this->getValidator($data)->passes();
-    }
-
-    /**
-     * Создание экземпляра валидатора с правилами из StoreCategoryRequest.
-     */
     private function getValidator(array $data): ValidationValidator
     {
         $request = new StoreCategoryRequest();
 
-        return Validator::make(
-            $data,
-            $request->rules(),
-            $request->messages(),
-            $request->attributes()
-        );
+        return Validator::make($data, $request->rules(), $request->messages(), $request->attributes());
     }
 
     /**
@@ -43,55 +26,48 @@ class StoreCategoryRequestTest extends TestCase
      */
     public function test_validation_passes_with_valid_data(): void
     {
-        $data = [
-            'name' => 'Новая категория',
-            'parent_id' => null,
-        ];
-
-        $this->assertTrue($this->validate($data));
+        $this->assertTrue(
+            $this->getValidator([
+                'title' => 'Электроника',
+                'parent_id' => null,
+            ])->passes()
+        );
     }
 
     /**
-     * Тест: Ошибка, если имя категории уже занято.
+     * Тест: Ошибка при пустом заголовке.
      */
-    public function test_validation_passes_if_name_is_not_unique(): void
+    public function test_validation_fails_if_title_is_missing(): void
     {
-        Category::create([
-            'name' => 'Обувь',
-        ]);
+        $validator = $this->getValidator(['title' => '']);
 
-        $data = [
-            'name' => 'Обувь',
-        ];
-
-        $validator = $this->getValidator($data);
-        $this->assertTrue($validator->passes());
+        $this->assertFalse($validator->passes());
+        $this->assertEquals('Укажите название категории.', $validator->errors()->first('title'));
     }
 
     /**
      * Тест: Ошибка, если родительская категория содержит товары.
+     * (Проверка логики "товары только в листьях")
      */
     public function test_validation_fails_if_parent_category_has_products(): void
     {
-        $parent = Category::create([
-            'name' => 'Родитель',
-        ]);
+        $parent = Category::create(['title' => 'Одежда', 'slug' => 'odezhda']);
 
+        // Создаем товар в этой категории
         Product::create([
-            'name' => 'Тестовый товар',
-            'category_id' => $parent->id
+            'title' => 'Футболка', // Убедитесь, что в БД 'title', а не 'name'
+            'slug' => 't-shirt',
+            'category_id' => $parent->id,
         ]);
 
-        $data = [
-            'name' => 'Подкатегория',
-            'parent_id' => $parent->id
-        ];
-
-        $validator = $this->getValidator($data);
+        $validator = $this->getValidator([
+            'title' => 'Мужская одежда',
+            'parent_id' => $parent->id,
+        ]);
 
         $this->assertFalse($validator->passes());
         $this->assertStringContainsString(
-            'Выбранная родительская категория содержит товары',
+            'содержит товары',
             $validator->errors()->first('parent_id')
         );
     }
@@ -101,14 +77,14 @@ class StoreCategoryRequestTest extends TestCase
      */
     public function test_validation_passes_if_parent_category_is_empty(): void
     {
-        $parent = Category::create(['name' => 'Пустой родитель', 'slug' => 'empty']);
+        $parent = Category::create(['title' => 'Пустой родитель', 'slug' => 'empty']);
 
-        $data = [
-            'name' => 'Подкатегория',
-            'parent_id' => $parent->id
-        ];
-
-        $this->assertTrue($this->validate($data));
+        $this->assertTrue(
+            $this->getValidator([
+                'title' => 'Подкатегория',
+                'parent_id' => $parent->id,
+            ])->passes()
+        );
     }
 
     /**
@@ -116,13 +92,47 @@ class StoreCategoryRequestTest extends TestCase
      */
     public function test_validation_fails_if_parent_id_does_not_exist(): void
     {
-        $data = [
-            'name' => 'Категория',
-            'parent_id' => 999
-        ];
+        $validator = $this->getValidator([
+            'title' => 'Тест',
+            'parent_id' => 999,
+        ]);
 
-        $validator = $this->getValidator($data);
         $this->assertFalse($validator->passes());
-        $this->assertArrayHasKey('parent_id', $validator->errors()->messages());
+        $this->assertEquals(
+            'Выбранная родительская категория не найдена в базе данных.',
+            $validator->errors()->first('parent_id')
+        );
+    }
+
+    /**
+     * Тест: Ошибка, если название слишком длинное.
+     */
+    public function test_validation_fails_if_title_is_too_long(): void
+    {
+        $validator = $this->getValidator(['title' => str_repeat('a', 256)]);
+
+        $this->assertFalse($validator->passes());
+        $this->assertEquals('Название слишком длинное (максимум 255 символов).', $validator->errors()->first('title'));
+    }
+
+    /**
+     * Тест: Ошибка, если название категории уже занято.
+     */
+    public function test_validation_fails_if_title_is_not_unique(): void
+    {
+        // 1. Создаем существующую категорию
+        Category::create([
+            'title' => 'Обувь',
+            'slug' => 'obuv',
+        ]);
+
+        // 2. Пытаемся валидировать такое же название
+        $validator = $this->getValidator([
+            'title' => 'Обувь',
+        ]);
+
+        $this->assertFalse($validator->passes(), 'Валидация должна была упасть из-за неуникального заголовка');
+        $this->assertArrayHasKey('title', $validator->errors()->messages());
+        $this->assertEquals('Категория с таким именем уже существует.', $validator->errors()->first('title'));
     }
 }
