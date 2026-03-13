@@ -41,6 +41,9 @@ db-refresh:
 php-cli:
 	./vendor/bin/sail bash
 
+show-db-triggers:
+	./vendor/bin/sail artisan app:show-db-triggers
+
 
 
 
