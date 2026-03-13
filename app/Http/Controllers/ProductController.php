@@ -14,8 +14,9 @@ class ProductController extends Controller
 
     public function index(CatalogFilterRequest $request, int $categoryId): Response
     {
-        $data = $this->catalogService->getCategoryCatalog($categoryId, $request);
-
-        return Inertia::render('Catalog/CategoryPage', $data);
+        return Inertia::render(
+            'Catalog/CategoryPage',
+            $this->catalogService->getCategoryCatalog($categoryId, $request)
+        );
     }
 }

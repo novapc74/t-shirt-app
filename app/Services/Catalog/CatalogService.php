@@ -2,26 +2,26 @@
 
 namespace App\Services\Catalog;
 
-use App\Models\{Product, Category};
+use App\Models\Category;
 use App\Http\Requests\CatalogFilterRequest;
 use App\Services\Catalog\DTO\CatalogFilterRequestDto;
-use Illuminate\Support\Facades\{DB, Cache};
-use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 
-readonly class CatalogService
+class CatalogService
 {
-    public function __construct(
-        private FilterService $filterService
-    ) {}
+    private FilterService $filterService;
 
-    /**
-     * Основной метод получения каталога с умными фильтрами
-     */
+    public function __construct(FilterService $filterService)
+    {
+        $this->filterService = $filterService;
+    }
+
     public function getCategoryCatalog(int $categoryId, CatalogFilterRequest $request): array
     {
         $category = Category::findOrFail($categoryId);
 
-        // 1. Кэшируем доступные типы фильтров для этой категории (через пересечение векторов)
+        // 1. Кэшируем доступные типы фильтров для этой категории
         $allowedKeys = Cache::remember("allowed_keys_$categoryId", 3600, function () use ($categoryId) {
             return DB::table('filter_vectors')
                 ->whereRaw('variant_ids && (
@@ -30,209 +30,189 @@ readonly class CatalogService
                     JOIN products as p ON p.id = pv.product_id
                     WHERE p.category_id = ?
                 )', [$categoryId])
-                ->distinct()
                 ->pluck('entity_type')
                 ->toArray();
         });
 
         $dto = CatalogFilterRequestDto::fromRequest($request, $allowedKeys);
 
-        // 2. Получаем ID вариантов, прошедших итоговую фильтрацию
+        // 2. Итоговые ID вариантов для списка товаров (логика AND между группами)
         $variantIds = $this->filterService->getMatchedVariantIds($dto);
+        $vIdsRaw = '{' . implode(',', $variantIds ?: []) . '}';
 
-        // 3. Считаем УМНЫЕ СЧЕТЧИКИ (Smart Filters) с логикой OR внутри группы
-        $counters = $this->getSmartFilterCounters($categoryId, $dto, $allowedKeys);
-
-        // 4. Получаем ID товаров и загружаем их с пагинацией
-        $productIds = !empty($variantIds)
-            ? DB::table('product_variants')->whereIn('id', $variantIds)->distinct()->pluck('product_id')->toArray()
-            : [];
-
-        $products = Product::query()
-            ->whereIn('id', $productIds)
-            ->where('category_id', $categoryId)
-            ->with([
-                'brand',
-                'category',
-                'variants' => function ($q) use ($variantIds) {
-                    $q->whereIn('id', $variantIds)->with(['color', 'size', 'gender', 'prices', 'stocks']);
-                }
-            ])
-            ->paginate(12);
-
-        // Если товаров нет, возвращаем пустую структуру, но с категориями и фильтрами
-        if ($products->isEmpty()) {
-            return $this->formatEmptyResponse($category, $dto, $categoryId, $allowedKeys);
+        // 3. Подготовка данных для "умных счетчиков" (логика OR внутри группы)
+        $groupKeys = [];
+        $groupVectors = [];
+        foreach ($allowedKeys as $type) {
+            if (in_array($type, ['category', 'system'])) continue;
+            $groupKeys[] = $type;
+            $baseIds = $this->filterService->getMatchedVariantIds($dto, $type);
+            $groupVectors[] = '{' . implode(',', $baseIds ?: []) . '}';
         }
 
-        return [
-            'category' => $category->title,
-            'products' => $this->formatProducts($products),
-            'filters'  => $this->formatFilters($counters, $dto, $variantIds)
-        ];
-    }
+        // Превращаем массивы ключей в формат Postgres {a,b,c} для unnest
+        $groupKeysRaw = '{' . implode(',', $groupKeys) . '}';
+        $groupVectorsRaw = '{' . implode(',', array_map(fn($v) => '"' . $v . '"', $groupVectors)) . '}';
 
-    /**
-     * Логика умных счетчиков: исключаем текущую группу при расчете её же цифр
-     */
-    private function getSmartFilterCounters(int $categoryId, CatalogFilterRequestDto $dto, array $allowedKeys): array
-    {
         $categoryVector = DB::table('filter_vectors')
             ->where('entity_type', 'category')
             ->where('entity_id', $categoryId)
             ->value('variant_ids') ?? '{}';
 
-        $results = [];
+        $page = (int)$request->get('page', 1);
+        $perPage = 12;
+        $offset = ($page - 1) * $perPage;
 
-        foreach ($allowedKeys as $type) {
-            if (in_array($type, ['category', 'system'])) continue;
+        // 4. Единый SQL запрос (Чистый Postgres)
+        $dbResult = DB::selectOne("
+            WITH
+            group_bases AS (
+                SELECT unnest(:groupKeys::text[]) as g_type,
+                       unnest(:groupVectors::text[])::int4[] as g_vector
+            ),
+            filter_counts AS (
+                SELECT
+                    fv.entity_type,
+                    fv.entity_id,
+                    icount((gb.g_vector & fv.variant_ids) & :catVector::int4[]) as total
+                FROM filter_vectors fv
+                JOIN group_bases gb ON gb.g_type = fv.entity_type
+                WHERE fv.variant_ids && :catVector::int4[]
+            ),
+            paged_products AS (
+                SELECT p.id, p.title, p.slug, p.brand_id, p.category_id, count(*) OVER() as full_count
+                FROM products p
+                WHERE p.category_id = :catId
+                  AND EXISTS (
+                      SELECT 1 FROM product_variants pv
+                      WHERE pv.product_id = p.id AND pv.id = ANY(:vIds::int4[])
+                  )
+                ORDER BY p.id DESC
+                LIMIT :limit OFFSET :offset
+            )
+            SELECT
+                json_build_object(
+                    'total', COALESCE((SELECT MAX(full_count) FROM paged_products), 0),
+                    'items', (
+                        SELECT COALESCE(json_agg(p_row), '[]'::json) FROM (
+                            SELECT
+                                pp.id, pp.title as name, pp.slug,
+                                b.title as brand,
+                                cat.title as category,
+                                (SELECT MIN(price) FROM prices
+                                 WHERE product_variant_id = ANY(:vIds::int4[])
+                                   AND product_variant_id IN (SELECT id FROM product_variants WHERE product_id = pp.id)) as min_price,
+                                (
+                                    SELECT json_agg(v_row) FROM (
+                                        SELECT
+                                            v.id, v.sku,
+                                            (SELECT price FROM prices WHERE product_variant_id = v.id AND price_type_id = 1 LIMIT 1) as price,
+                                            json_build_object('id', c.id, 'title', c.title, 'slug', c.slug, 'hex_code', c.hex_code) as color,
+                                            json_build_object('id', s.id, 'title', s.title, 'slug', s.slug) as size,
+                                            json_build_object('id', g.id, 'title', g.title, 'slug', g.slug) as gender
+                                        FROM product_variants v
+                                        LEFT JOIN colors c ON c.id = v.color_id
+                                        LEFT JOIN sizes s ON s.id = v.size_id
+                                        LEFT JOIN genders g ON g.id = v.gender_id
+                                        WHERE v.product_id = pp.id AND v.id = ANY(:vIds::int4[])
+                                    ) v_row
+                                ) as variants
+                            FROM paged_products pp
+                            LEFT JOIN brands b ON b.id = pp.brand_id
+                            LEFT JOIN categories cat ON cat.id = pp.category_id
+                        ) p_row
+                    )
+                ) as products_json,
+                (SELECT COALESCE(json_agg(fc), '[]'::json) FROM filter_counts fc) as counters_json,
+                (SELECT json_build_object('min', COALESCE(MIN(price),0), 'max', COALESCE(MAX(price),0))
+                 FROM prices WHERE product_variant_id = ANY(:vIds::int4[])) as price_stats
+        ", [
+            'groupKeys'    => $groupKeysRaw,
+            'groupVectors' => $groupVectorsRaw,
+            'catVector'    => $categoryVector,
+            'vIds'         => $vIdsRaw,
+            'catId'        => $categoryId,
+            'limit'        => $perPage,
+            'offset'       => $offset
+        ]);
 
-            // ПРАВИЛО: Для расчета счетчиков группы мы ИГНОРИРУЕМ выбор внутри этой группы.
-            // Это позволяет "Синему" не обнулять "Красный".
-            $baseVariantIds = $this->filterService->getMatchedVariantIds($dto, $type);
-            $baseSet = '{' . implode(',', $baseVariantIds ?: []) . '}';
+        // 5. Декодирование и сборка финального ответа
+        $productsData = json_decode($dbResult->products_json, true);
+        $counters = $this->mapCounters(json_decode($dbResult->counters_json, true));
+        $priceStats = json_decode($dbResult->price_stats, true);
 
-            $counts = DB::table('filter_vectors')
-                ->where('entity_type', $type)
-                ->select('entity_id')
-                ->selectRaw('icount((variant_ids & ?::int4[]) & ?::int4[]) as total', [
-                    $baseSet,
-                    $categoryVector
-                ])
-                ->whereRaw('variant_ids && ?::int4[]', [$categoryVector])
-                ->get()
-                ->pluck('total', 'entity_id')
-                ->toArray();
-
-            $results[$type] = $counts;
-        }
-
-        return $results;
-    }
-
-
-    /**
-     * Форматирование продуктов для фронтенда
-     */
-    private function formatProducts(LengthAwarePaginator $paginated): array
-    {
         return [
-            'data' => collect($paginated->items())->map(fn($p) => [
-                'id'        => $p->id,
-                'name'      => $p->name,
-                'slug'      => $p->slug,
-                'brand'     => $p->brand?->title,
-                'category'  => $p->category?->title,
-                'min_price' => (float)$p->variants->min('price'),
-                'variants'  => $p->variants->map(fn($v) => [
-                    'id'     => $v->id,
-                    'sku'    => $v->sku,
-                    'price'  => (float)$v->prices->where('price_type_id', 1)->first()?->price,
-                    'color'  => $v->color ? (array)$v->color->only('id', 'title', 'slug', 'hex_code') : null,
-                    'size'   => $v->size ? (array)$v->size->only('id', 'title', 'slug') : null,
-                    'gender' => $v->gender ? (array)$v->gender->only('id', 'title', 'slug') : null,
-                ])
-            ]),
-            'meta' => [
-                'total'        => $paginated->total(),
-                'current_page' => $paginated->currentPage(),
-                'last_page'    => $paginated->lastPage(),
-                'per_page'     => $paginated->perPage(),
-            ]
+            'category' => $category->title,
+            'products' => [
+                'data' => $productsData['items'] ?? [],
+                'meta' => [
+                    'total'        => (int)($productsData['total'] ?? 0),
+                    'current_page' => $page,
+                    'last_page'    => (int)ceil(($productsData['total'] ?? 0) / $perPage),
+                    'per_page'     => $perPage,
+                ]
+            ],
+            'filters' => $this->assembleFilters($counters, $dto, $priceStats)
         ];
     }
 
-    /**
-     * Сборка и форматирование фильтров
-     */
-    private function formatFilters(array $counters, CatalogFilterRequestDto $dto, array $variantIds): array
+    private function mapCounters(?array $raw): array
     {
-        $definitions = $this->getFilterDefinitions();
+        $res = [];
+        foreach ($raw ?? [] as $item) {
+            $res[$item['entity_type']][$item['entity_id']] = $item['total'];
+        }
+        return $res;
+    }
 
-        $priceStats = empty($variantIds)
-            ? (object)['min' => 0, 'max' => 0]
-            : DB::table('prices')->whereIn('product_variant_id', $variantIds)->selectRaw('MIN(price) as min, MAX(price) as max')->first();
+    private function assembleFilters(array $counters, CatalogFilterRequestDto $dto, array $priceStats): array
+    {
+        $definitions = Cache::remember('catalog_filter_definitions', 86400, fn() => $this->getFilterDefinitions());
 
         return array_map(function ($filter) use ($counters, $dto, $priceStats) {
             $slug = $filter['slug'];
-
             if ($slug === 'price') {
                 $filter['values'] = [
-                    'min' => (float)($priceStats->min ?? 0),
-                    'max' => (float)($priceStats->max ?? 0)
+                    'min' => (float)($priceStats['min'] ?? 0),
+                    'max' => (float)($priceStats['max'] ?? 0)
                 ];
                 return $filter;
             }
-
             $activeIds = $dto->getFilters($slug);
-
             $filter['values'] = array_map(function ($val) use ($counters, $slug, $activeIds) {
-                $val = (array)$val;
-                $id = $val['id'];
-                $count = $counters[$slug][$id] ?? 0;
-
+                $count = $counters[$slug][$val['id']] ?? 0;
                 return array_merge($val, [
-                    'count'        => $count,
+                    'count'        => (int)$count,
                     'is_available' => $count > 0,
-                    'is_active'    => in_array($id, $activeIds)
+                    'is_active'    => in_array($val['id'], $activeIds)
                 ]);
-            }, (array)$filter['values']);
-
+            }, $filter['values'] ?? []);
             return $filter;
         }, $definitions);
     }
 
-    /**
-     * Справочники фильтров (минимальное потребление памяти)
-     */
     private function getFilterDefinitions(): array
     {
-        return Cache::remember('catalog_filter_definitions', 86400, function () {
-            $data = [];
-            $data[] = ['id' => 1, 'slug' => 'price', 'title' => 'Цена', 'type' => 'range'];
-
-            $tables = [
-                ['slug' => 'brand',  'title' => 'Бренд',  'table' => 'brands',  'cols' => 'id, title'],
-                ['slug' => 'color',  'title' => 'Цвет',   'table' => 'colors',  'cols' => 'id, title, slug, hex_code'],
-                ['slug' => 'size',   'title' => 'Размер', 'table' => 'sizes',   'cols' => 'id, title, slug'],
-                ['slug' => 'gender', 'title' => 'Гендер', 'table' => 'genders', 'cols' => 'id, title, slug'],
-            ];
-
-            foreach ($tables as $t) {
-                $data[] = [
-                    'id'     => count($data) + 1,
-                    'slug'   => $t['slug'],
-                    'title'  => $t['title'],
-                    'type'   => 'checkbox',
-                    'values' => DB::table($t['table'])->selectRaw($t['cols'])->get()->map(fn($v) => (array)$v)->toArray()
-                ];
-            }
-
-            $dynamicProps = DB::table('properties')->select('id', 'slug', 'title')->get();
-            foreach ($dynamicProps as $prop) {
-                $data[] = [
-                    'id' => $prop->id + 100,
-                    'slug' => $prop->slug,
-                    'title' => $prop->title,
-                    'type' => 'checkbox',
-                    'values' => DB::table('property_values')
-                        ->where('property_id', $prop->id)
-                        ->select('id', 'value as title', 'slug')
-                        ->get()->map(fn($v) => (array)$v)->toArray()
-                ];
-            }
-
-            return $data;
-        });
-    }
-
-    private function formatEmptyResponse(Category $category, CatalogFilterRequestDto $dto, int $categoryId, array $allowedKeys): array
-    {
-        $counters = $this->getSmartFilterCounters($categoryId, $dto, $allowedKeys);
-        return [
-            'category' => $category->title,
-            'products' => ['data' => [], 'meta' => ['total' => 0, 'current_page' => 1, 'last_page' => 1, 'per_page' => 12]],
-            'filters'  => $this->formatFilters($counters, $dto, [])
+        $data = [['id' => 1, 'slug' => 'price', 'title' => 'Цена', 'type' => 'range']];
+        $tables = [
+            ['slug' => 'brand',  'title' => 'Бренд',  'table' => 'brands',  'cols' => 'id, title'],
+            ['slug' => 'color',  'title' => 'Цвет',   'table' => 'colors',  'cols' => 'id, title, slug, hex_code'],
+            ['slug' => 'size',   'title' => 'Размер', 'table' => 'sizes',   'cols' => 'id, title, slug'],
+            ['slug' => 'gender', 'title' => 'Гендер', 'table' => 'genders', 'cols' => 'id, title, slug'],
         ];
+        foreach ($tables as $t) {
+            $data[] = [
+                'id' => count($data) + 1, 'slug' => $t['slug'], 'title' => $t['title'], 'type' => 'checkbox',
+                'values' => DB::table($t['table'])->selectRaw($t['cols'])->get()->map(fn($v) => (array)$v)->toArray()
+            ];
+        }
+        foreach (DB::table('properties')->get() as $prop) {
+            $data[] = [
+                'id' => (int)$prop->id + 100, 'slug' => $prop->slug, 'title' => $prop->title, 'type' => 'checkbox',
+                'values' => DB::table('property_values')->where('property_id', $prop->id)
+                    ->select('id', 'value as title', 'slug')->get()->map(fn($v) => (array)$v)->toArray()
+            ];
+        }
+        return $data;
     }
 }

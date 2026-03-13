@@ -9,55 +9,55 @@ class FilterService
 {
     /**
      * Возвращает массив ID вариантов, прошедших фильтры.
+     *
      * @param string|null $excludeType Группа, которую нужно исключить (для умных счетчиков)
      */
     public function getMatchedVariantIds(CatalogFilterRequestDto $params, ?string $excludeType = null): array
     {
         $filters = $params->getFilters();
+        $selectParts = [];
 
-        // 1. Базовый слой — наличие (всегда AND)
-        $stockSql = "SELECT COALESCE(variant_ids, '{}'::int4[]) as vids FROM filter_vectors WHERE entity_type = 'system' AND entity_id = 1";
-        $fromClauses = ["($stockSql) AS stock(vids)"];
-        $intersectChain = ["stock.vids"];
+        // 1. Базовый слой — наличие (entity_id = 1 для системы)
+        $selectParts['stock'] = "SELECT variant_ids FROM filter_vectors WHERE entity_type = 'system' AND entity_id = 1";
 
-        // 2. Свойства (Характеристики)
+        // 2. Группы фильтров
         foreach ($filters as $type => $ids) {
-            // Исключаем группу, если считаем её же счетчики (логика OR для UI)
-            if ($type === $excludeType || empty($ids) || $type === 'price') continue;
+            if ($type === $excludeType || empty($ids) || $type === 'price') {
+                continue;
+            }
 
             $idsList = implode(',', array_map('intval', (array)$ids));
-
-            // Внутри ГРУППЫ всегда OR (объединение)
-            $subSql = "SELECT COALESCE(array_cat_agg(variant_ids), '{}'::int4[]) as vids FROM filter_vectors WHERE entity_type = '$type' AND entity_id IN ($idsList)";
-
-            $idx = count($fromClauses);
-            $fromClauses[] = "($subSql) AS g$idx(vids)";
-            $intersectChain[] = "g$idx.vids";
+            // Используем агрегат array_cat_agg для OR внутри группы
+            $selectParts[$type] = "SELECT COALESCE(array_cat_agg(variant_ids), '{}'::int4[])
+                               FROM filter_vectors
+                               WHERE entity_type = '$type' AND entity_id IN ($idsList)";
         }
 
-        // 3. Цена (Всегда OR внутри диапазона)
+        // 3. Цена
         if ($params->hasPriceFilter() && $excludeType !== 'price') {
-            $min = (int)($params->getMinPrice() ?? 0);
-            $max = (int)($params->getMaxPrice() ?? 999999);
+            $min = (int)$params->getMinPrice();
+            $max = (int)$params->getMaxPrice();
 
-            $priceSql = "SELECT COALESCE(array_cat_agg(variant_ids), '{}'::int4[]) as vids FROM filter_vectors WHERE entity_type = 'price_range' AND entity_id BETWEEN $min AND $max";
-
-            $idx = count($fromClauses);
-            $fromClauses[] = "($priceSql) AS g$idx(vids)";
-            $intersectChain[] = "g$idx.vids";
+            $selectParts['price'] = "SELECT COALESCE(array_cat_agg(variant_ids), '{}'::int4[])
+                                 FROM filter_vectors
+                                 WHERE entity_type = 'price_range'
+                                   AND entity_id BETWEEN $min AND $max";
         }
 
-        // 4. МЕЖДУ ГРУППАМИ всегда AND (пересечение через &)
-        $chain = implode(' & ', $intersectChain);
-        $sql = "SELECT (COALESCE($chain, '{}'::int4[]))::text as matched FROM " . implode(', ', $fromClauses);
+        // Собираем итоговое пересечение (AND между группами)
+        // Оборачиваем каждый подзапрос в скобки
+        $intersectChain = array_map(fn($sql) => "($sql)", array_values($selectParts));
 
-        $result = DB::selectOne($sql);
-        $raw = $result->matched ?? '{}';
+        // Используем оператор & для пересечения всех полученных векторов
+        $finalSql = "SELECT (".implode(' & ', $intersectChain).") as matched";
 
-        if ($raw === '{}' || $raw === 'null' || empty($raw)) {
+        $result = DB::selectOne($finalSql);
+
+        if (!$result || empty($result->matched)) {
             return [];
         }
 
-        return explode(',', trim($raw, '{}'));
+        // Преобразуем строку Postgres {1,2,3} в массив PHP [1,2,3]
+        return str_getcsv(trim($result->matched, '{}'));
     }
 }
