@@ -3,14 +3,12 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
 
-return new class extends Migration
-{
+return new class extends Migration {
     public function up(): void
     {
-        DB::statement('CREATE EXTENSION IF NOT EXISTS intarray');
-
         // 1. Функция объединения (OR) - возвращает уникальные отсортированные ID
-        DB::statement("
+        DB::statement(
+            "
             CREATE OR REPLACE FUNCTION array_cat_agg_func(anyarray, anyarray)
             RETURNS anyarray AS $$
             BEGIN
@@ -19,18 +17,22 @@ return new class extends Migration
                 RETURN uniq(sort(array_cat($1, $2)));
             END;
             $$ LANGUAGE plpgsql IMMUTABLE;
-        ");
+        "
+        );
 
-        DB::statement("
+        DB::statement(
+            "
             CREATE OR REPLACE AGGREGATE array_cat_agg(anyarray) (
                 SFUNC = array_cat_agg_func,
                 STYPE = anyarray,
                 INITCOND = '{}'
             );
-        ");
+        "
+        );
 
         // 2. Функция пересечения (AND) - ГАРАНТИРУЕТ отсутствие NULL
-        DB::statement("
+        DB::statement(
+            "
             CREATE OR REPLACE FUNCTION intersect_all_func(anyarray, anyarray)
             RETURNS anyarray AS $$
             BEGIN
@@ -48,15 +50,18 @@ return new class extends Migration
                 RETURN $1 & $2;
             END;
             $$ LANGUAGE plpgsql IMMUTABLE;
-        ");
+        "
+        );
 
-        DB::statement("
+        DB::statement(
+            "
             CREATE OR REPLACE AGGREGATE intersect_agg(anyarray) (
                 SFUNC = intersect_all_func,
                 STYPE = anyarray,
                 INITCOND = NULL
             );
-        ");
+        "
+        );
     }
 
     public function down(): void

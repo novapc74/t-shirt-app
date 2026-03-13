@@ -46,6 +46,6 @@ return new class extends Migration {
     public function down(): void
     {
         Schema::dropIfExists('filter_vectors');
-         DB::statement('DROP EXTENSION IF EXISTS intarray');
+        DB::statement('DROP EXTENSION IF EXISTS intarray');
     }
 };
