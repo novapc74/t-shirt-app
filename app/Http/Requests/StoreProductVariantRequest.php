@@ -46,7 +46,7 @@ class StoreProductVariantRequest extends FormRequest
                 if ($propertyId) {
                     // Кэшируем названия свойств на время запроса, чтобы не делать 100 SQL слипов
                     $property = Property::find($propertyId);
-                    $label = $property ? $property->name : $label;
+                    $label = $property ? $property->title : $label;
                 }
 
                 $dynamicAttributes["properties.$index.value"] = "значение ($label)";

@@ -22,14 +22,14 @@ class StoreWarehouseRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'name' => [
+            'title' => [
                 'required',
                 'string',
                 'min:2',
                 'max:100',
                 // Уникальность названия.
                 // ignore($this->route('warehouse')) позволяет обновлять склад, не меняя его имя.
-                Rule::unique('warehouses', 'name')->ignore($this->route('warehouse')),
+                Rule::unique('warehouses', 'title')->ignore($this->route('warehouse')),
             ],
         ];
     }
@@ -39,10 +39,10 @@ class StoreWarehouseRequest extends FormRequest
      */
     protected function prepareForValidation(): void
     {
-        if ($this->has('name')) {
+        if ($this->has('title')) {
             $this->merge([
                 // Убираем лишние пробелы по краям и двойные пробелы внутри
-                'name' => preg_replace('/\s+/', ' ', trim($this->name)),
+                'title' => preg_replace('/\s+/', ' ', trim($this->title)),
             ]);
         }
     }
@@ -53,10 +53,10 @@ class StoreWarehouseRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'name.required' => 'Название склада обязательно для заполнения.',
-            'name.min'      => 'Название склада должно содержать минимум :min символа.',
-            'name.unique'   => 'Склад с таким названием уже существует.',
-            'name.max'      => 'Название склада не должно превышать :max символов.',
+            'title.required' => 'Название склада обязательно для заполнения.',
+            'title.min'      => 'Название склада должно содержать минимум :min символа.',
+            'title.unique'   => 'Склад с таким названием уже существует.',
+            'title.max'      => 'Название склада не должно превышать :max символов.',
         ];
     }
 
@@ -66,7 +66,7 @@ class StoreWarehouseRequest extends FormRequest
     public function attributes(): array
     {
         return [
-            'name' => 'название склада',
+            'title' => 'название склада',
         ];
     }
 }

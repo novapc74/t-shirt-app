@@ -24,16 +24,16 @@ class StoreProductVariantRequestTest extends TestCase
         parent::setUp();
 
         $category = Category::create([
-            'name' => 'Тестовая категория',
+            'title' => 'Тестовая категория',
         ]);
 
         $this->colorProp = Property::create([
-            'name' => 'Цвет',
+            'title' => 'Цвет',
             'slug' => 'color'
         ]);
 
         $this->product = Product::create([
-            'name' => 'Тестовый товар',
+            'title' => 'Тестовый товар',
             'category_id' => $category->id
         ]);
     }
@@ -96,13 +96,16 @@ class StoreProductVariantRequestTest extends TestCase
         $this->assertFalse($this->validate($data));
     }
 
-    public function test_it_has_correct_dynamic_attributes_names(): void
+    public function test_it_has_correct_dynamic_attributes_titles(): void
     {
         $data = [
             'product_id' => $this->product->id,
             'sku'        => 'SKU-3',
             'properties' => [
-                ['id' => $this->colorProp->id, 'value' => ''] // Пустое значение
+                [
+                    'id' => $this->colorProp->id,
+                    'value' => ''  // Пустое значение
+                ]
             ]
         ];
 

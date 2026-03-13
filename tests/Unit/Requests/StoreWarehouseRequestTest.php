@@ -20,8 +20,8 @@ class StoreWarehouseRequestTest extends TestCase
         $request = new StoreWarehouseRequest();
 
         // Имитируем очистку пробелов из prepareForValidation
-        if (isset($data['name'])) {
-            $data['name'] = preg_replace('/\s+/', ' ', trim($data['name']));
+        if (isset($data['title'])) {
+            $data['title'] = preg_replace('/\s+/', ' ', trim($data['title']));
         }
 
         return Validator::make(
@@ -32,49 +32,49 @@ class StoreWarehouseRequestTest extends TestCase
         );
     }
 
-    public function test_it_passes_with_valid_name(): void
+    public function test_it_passes_with_valid_title(): void
     {
-        $validator = $this->validate(['name' => 'Склад на Севере']);
+        $validator = $this->validate(['title' => 'Склад на Севере']);
 
         $this->assertTrue($validator->passes());
     }
 
-    public function test_it_fails_if_name_is_missing(): void
+    public function test_it_fails_if_title_is_missing(): void
     {
-        $validator = $this->validate(['name' => '']);
+        $validator = $this->validate(['title' => '']);
 
         $this->assertFalse($validator->passes());
-        $this->assertArrayHasKey('name', $validator->errors()->toArray());
-        $this->assertEquals('Название склада обязательно для заполнения.', $validator->errors()->first('name'));
+        $this->assertArrayHasKey('title', $validator->errors()->toArray());
+        $this->assertEquals('Название склада обязательно для заполнения.', $validator->errors()->first('title'));
     }
 
-    public function test_it_fails_if_name_is_too_short(): void
+    public function test_it_fails_if_title_is_too_short(): void
     {
-        $validator = $this->validate(['name' => 'A']);
+        $validator = $this->validate(['title' => 'A']);
 
         $this->assertFalse($validator->passes());
-        $this->assertEquals('Название склада должно содержать минимум 2 символа.', $validator->errors()->first('name'));
+        $this->assertEquals('Название склада должно содержать минимум 2 символа.', $validator->errors()->first('title'));
     }
 
-    public function test_it_fails_if_name_already_exists(): void
+    public function test_it_fails_if_title_already_exists(): void
     {
-        Warehouse::factory()->create(['name' => 'Главный Склад']);
+        Warehouse::factory()->create(['title' => 'Главный Склад']);
 
-        $validator = $this->validate(['name' => 'Главный Склад']);
+        $validator = $this->validate(['title' => 'Главный Склад']);
 
         $this->assertFalse($validator->passes());
-        $this->assertEquals('Склад с таким названием уже существует.', $validator->errors()->first('name'));
+        $this->assertEquals('Склад с таким названием уже существует.', $validator->errors()->first('title'));
     }
 
-    public function test_it_trims_and_cleans_spaces_in_name(): void
+    public function test_it_trims_and_cleans_spaces_in_title(): void
     {
         // Передаем "грязную" строку с кучей пробелов
-        $validator = $this->validate(['name' => '   Склад    №1   ']);
+        $validator = $this->validate(['title' => '   Склад    №1   ']);
 
         $this->assertTrue($validator->passes());
 
         // Проверяем, что в данных валидатора строка стала чистой
-        $this->assertEquals('Склад №1', $validator->getData()['name']);
+        $this->assertEquals('Склад №1', $validator->getData()['title']);
     }
 }
 
