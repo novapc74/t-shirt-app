@@ -29,7 +29,10 @@ class SyncFilterVectors extends Command
         // 3. Динамические свойства (Характеристики)
         $this->syncProperties();
 
-        // 4. Системные фильтры (Наличие)
+        // 4. Цены
+        $this->syncPrices();
+
+        // 5. Системные фильтры (Наличие)
         $this->refreshSystemStockVector();
 
         $this->info('--- Синхронизация успешно завершена ---');
@@ -101,5 +104,23 @@ class SyncFilterVectors extends Command
             ON CONFLICT (entity_type, entity_id) DO UPDATE SET variant_ids = EXCLUDED.variant_ids
         "
         );
+    }
+
+    private function syncPrices(): void
+    {
+        $this->info("Обработка: цены (диапазоны)...");
+
+        // Группируем варианты по цене.
+        // Если цены с копейками, приводим к целому числу (рубли) для BETWEEN
+        DB::statement("
+            INSERT INTO filter_vectors (entity_type, entity_id, variant_ids)
+            SELECT
+                'price_range',
+                price::int,
+                uniq(sort(array_agg(product_variant_id)::int4[]))
+            FROM prices
+            WHERE price_type_id = 1 -- Укажите ID вашей основной цены
+            GROUP BY price::int
+        ");
     }
 }
