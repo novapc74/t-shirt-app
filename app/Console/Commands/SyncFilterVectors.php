@@ -8,88 +8,92 @@ use Illuminate\Support\Facades\DB;
 class SyncFilterVectors extends Command
 {
     protected $signature = 'filter:sync';
-    protected $description = 'Сборка векторов ID ВАРИАНТОВ (Бренды, Категории из products)';
+    protected $description = 'Полная синхронизация векторов фильтрации';
 
     public function handle(): void
     {
-        $this->info('--- Старт синхронизации векторов ВАРИАНТОВ ---');
+        $this->info('--- Старт синхронизации векторов ---');
 
+        // Очищаем таблицу полностью
         DB::table('filter_vectors')->truncate();
 
-        // 1. КАТЕГОРИИ (из таблицы products)
+        // 1. Из таблицы PRODUCTS (Категории, Бренды)
         $this->syncFromProducts('category', 'category_id');
-
-        // 2. БРЕНДЫ (из таблицы products)
         $this->syncFromProducts('brand', 'brand_id');
 
-        // 3. ЦВЕТА И РАЗМЕРЫ (из таблицы product_variants)
+        // 2. Из таблицы PRODUCT_VARIANTS (Цвета, Размеры, Гендеры)
         $this->syncFromVariantAttr('color', 'color_id');
         $this->syncFromVariantAttr('size', 'size_id');
+        $this->syncFromVariantAttr('gender', 'gender_id'); // Добавил гендеры
 
-        // 4. ДИНАМИЧЕСКИЕ СВОЙСТВА (из твоей product_properties)
+        // 3. Динамические свойства (Характеристики)
         $this->syncProperties();
+
+        // 4. Системные фильтры (Наличие)
+        $this->refreshSystemStockVector();
 
         $this->info('--- Синхронизация успешно завершена ---');
     }
 
-    /**
-     * Свойства из таблицы PRODUCTS (Бренды, Категории)
-     * Берем ID всех вариантов для каждого товара
-     */
     private function syncFromProducts(string $type, string $column): void
     {
         $this->info("Обработка: $type...");
-
-        $data = DB::table('products')
-            ->join('product_variants', 'product_variants.product_id', '=', 'products.id')
-            ->select("products.$column as entity_id", DB::raw('array_agg(DISTINCT product_variants.id) as v_ids'))
-            ->whereNotNull("products.$column")
-            ->groupBy("products.$column")
-            ->get();
-
-        $this->insertBatch($type, $data);
+        DB::statement("
+            INSERT INTO filter_vectors (entity_type, entity_id, variant_ids)
+            SELECT :type, p.$column, uniq(sort(array_agg(pv.id)::int4[]))
+            FROM products p
+            JOIN product_variants pv ON pv.product_id = p.id
+            WHERE p.$column IS NOT NULL
+            GROUP BY p.$column
+        ", ['type' => $type]);
     }
 
-    /**
-     * Свойства из таблицы PRODUCT_VARIANTS (Цвета, Размеры)
-     */
     private function syncFromVariantAttr(string $type, string $column): void
     {
         $this->info("Обработка: $type...");
-
-        $data = DB::table('product_variants')
-            ->select("$column as entity_id", DB::raw('array_agg(id) as v_ids'))
-            ->whereNotNull($column)
-            ->groupBy($column)
-            ->get();
-
-        $this->insertBatch($type, $data);
+        DB::statement("
+            INSERT INTO filter_vectors (entity_type, entity_id, variant_ids)
+            SELECT :type, $column, uniq(sort(array_agg(id)::int4[]))
+            FROM product_variants
+            WHERE $column IS NOT NULL
+            GROUP BY $column
+        ", ['type' => $type]);
     }
 
-    /**
-     * Динамические свойства (Свойство ТОВАРА -> Все его варианты)
-     */
     private function syncProperties(): void
     {
-        $this->info("Обработка: prop_val (product_properties)...");
+        $this->info("Обработка: динамические свойства (через связку таблиц)...");
 
-        $data = DB::table('product_properties')
-            ->join('product_variants', 'product_variants.product_id', '=', 'product_properties.product_id')
-            ->select('product_properties.property_value_id as entity_id', DB::raw('array_agg(DISTINCT product_variants.id) as v_ids'))
-            ->groupBy('product_properties.property_value_id')
-            ->get();
+        // Очищаем старые свойства, если они были под другими именами
+        // (опционально, так как truncate в начале handle уже всё очистил)
 
-        $this->insertBatch('prop_val', $data);
+        DB::statement("
+        INSERT INTO filter_vectors (entity_type, entity_id, variant_ids)
+        SELECT
+            prop.slug as entity_type,
+            pp.property_value_id as entity_id,
+            uniq(sort(array_agg(pv.id)::int4[])) as variant_ids
+        FROM product_properties pp
+        JOIN property_values pv_vals ON pv_vals.id = pp.property_value_id
+        JOIN properties prop ON prop.id = pv_vals.property_id
+        JOIN product_variants pv ON pv.product_id = pp.product_id
+        WHERE pp.property_value_id IS NOT NULL
+        GROUP BY prop.slug, pp.property_value_id
+    ");
     }
 
-    private function insertBatch(string $type, $rows): void
+
+
+    public function refreshSystemStockVector(): void
     {
-        foreach ($rows as $row) {
-            DB::table('filter_vectors')->insert([
-                'entity_type' => $type,
-                'entity_id'   => $row->entity_id,
-                'variant_ids' => $row->v_ids
-            ]);
-        }
+        $this->info("Обработка: system (наличие)...");
+        DB::statement("
+            INSERT INTO filter_vectors (entity_type, entity_id, variant_ids)
+            SELECT 'system', 1, COALESCE(uniq(sort(array_agg(DISTINCT product_variant_id)::int4[])), '{}'::int4[])
+            FROM prices
+            WHERE product_variant_id IS NOT NULL
+            GROUP BY 1, 2
+            ON CONFLICT (entity_type, entity_id) DO UPDATE SET variant_ids = EXCLUDED.variant_ids
+        ");
     }
 }
