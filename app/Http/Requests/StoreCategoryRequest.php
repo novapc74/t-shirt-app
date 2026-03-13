@@ -36,6 +36,7 @@ class StoreCategoryRequest extends FormRequest
                     }
                 },
             ],
+            'priority' => ['nullable', 'integer', 'between:1,100'],
         ];
     }
 
@@ -50,6 +51,8 @@ class StoreCategoryRequest extends FormRequest
             'title.unique' => 'Категория с таким именем уже существует.',
             'parent_id.exists' => 'Выбранная родительская категория не найдена в базе данных.',
             'parent_id.integer' => 'Идентификатор родительской категории должен быть числом.',
+            'priority.integer' => 'Приоритет категории должен быть целым числом',
+            'priority.between' => 'Приоритет категории должен быть от 1 до 100',
         ];
     }
 
