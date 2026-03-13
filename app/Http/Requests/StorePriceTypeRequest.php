@@ -13,7 +13,7 @@ class StorePriceTypeRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return false;
+        return true;
     }
 
     /**
@@ -24,22 +24,16 @@ class StorePriceTypeRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'name' => ['required', 'string', 'max:255', 'unique:price_types,name'],
-            'slug' => [
-                'required',
-                'string',
-                'max:255',
-                // Уникальность слага, исключая текущую запись при обновлении
-                Rule::unique('price_types', 'slug')->ignore($this->route('price_type'))
-            ],
+            'title' => ['required', 'string', 'max:255', 'unique:price_types,title'],
+            'priority' => ['nullable', 'integer', 'between:1,100'],
         ];
     }
 
     public function attributes(): array
     {
         return [
-            'name' => 'название типа цены',
-            'slug' => 'символьный код (slug)',
+            'title' => 'название типа цены',
+            'priority' => 'приоритет',
         ];
     }
 
@@ -49,15 +43,12 @@ class StorePriceTypeRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'name.required' => 'Пожалуйста, укажите название типа цены.',
-            'name.string'   => 'Название должно быть текстовой строкой.',
-            'name.max'      => 'Название слишком длинное (максимум 255 символов).',
-            'name.unique'   => 'Тип цены с таким названием уже существует.',
-
-            'slug.required' => 'Символьный код (slug) обязателен для заполнения.',
-            'slug.string'   => 'Слаг должен быть строкой.',
-            'slug.unique'   => 'Этот символьный код уже занят другим типом цены.',
-            'slug.max'      => 'Слаг не может быть длиннее 255 символов.',
+            'title.required' => 'Пожалуйста, укажите название типа цены',
+            'title.string' => 'Название должно быть текстовой строкой',
+            'title.max' => 'Название слишком длинное (максимум 255 символов)',
+            'title.unique' => 'Тип цены с таким названием уже существует',
+            'priority.between' => 'Значение приоритета должно быть в интервале от 1 до 100',
+            'priority.integer' => 'Тип приоритета должно быть целым числом',
         ];
     }
 }

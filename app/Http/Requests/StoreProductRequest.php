@@ -25,16 +25,8 @@ class StoreProductRequest extends FormRequest
                     }
                 },
             ],
-            'name' => [
-                'required',
-                'string',
-                'max:255',
-            ],
-            'description' => [
-                'nullable',
-                'string',
-                'max:2000'
-            ],
+            'title' => ['required', 'string', 'max:255'],
+            'description' => ['nullable', 'string', 'max:2000'],
         ];
     }
 
@@ -43,7 +35,7 @@ class StoreProductRequest extends FormRequest
         return [
             'category_id.required' => 'Необходимо выбрать категорию.',
             'category_id.exists'   => 'Выбранная категория не существует.',
-            'name.required'        => 'Название товара обязательно.',
+            'title.required'        => 'Название товара обязательно.',
         ];
     }
 
@@ -51,7 +43,7 @@ class StoreProductRequest extends FormRequest
     {
         return [
             'category_id' => 'категория',
-            'name'        => 'название товара',
+            'title'        => 'название товара',
             'description' => 'описание',
         ];
     }

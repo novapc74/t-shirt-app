@@ -33,7 +33,7 @@ class StoreProductRequestTest extends TestCase
 
         $validator = $this->validate([
             'category_id' => $category->id,
-            'name'        => 'Футболка с принтом',
+            'title'        => 'Футболка с принтом',
             'description' => 'Качественный хлопок'
         ]);
 
@@ -43,7 +43,7 @@ class StoreProductRequestTest extends TestCase
     public function test_it_fails_if_category_id_is_missing(): void
     {
         $validator = $this->validate([
-            'name' => 'Футболка'
+            'title' => 'Футболка'
         ]);
 
         $this->assertFalse($validator->passes());
@@ -55,7 +55,7 @@ class StoreProductRequestTest extends TestCase
     {
         $validator = $this->validate([
             'category_id' => 999,
-            'name'        => 'Футболка'
+            'title'        => 'Футболка'
         ]);
 
         $this->assertFalse($validator->passes());
@@ -65,7 +65,7 @@ class StoreProductRequestTest extends TestCase
     public function test_it_fails_if_category_has_children(): void
     {
         $parent = Category::factory()->create([
-            'name' => 'Одежда'
+            'title' => 'Одежда'
         ]);
 
         Category::factory()->create([
@@ -74,7 +74,7 @@ class StoreProductRequestTest extends TestCase
 
         $validator = $this->validate([
             'category_id' => $parent->id,
-            'name'        => 'Футболка'
+            'title'        => 'Футболка'
         ]);
 
         $this->assertFalse($validator->passes());
@@ -84,7 +84,7 @@ class StoreProductRequestTest extends TestCase
         );
     }
 
-    public function test_it_fails_if_name_is_missing(): void
+    public function test_it_fails_if_title_is_missing(): void
     {
         $category = Category::factory()->create();
 
@@ -93,7 +93,7 @@ class StoreProductRequestTest extends TestCase
         ]);
 
         $this->assertFalse($validator->passes());
-        $this->assertEquals('Название товара обязательно.', $validator->errors()->first('name'));
+        $this->assertEquals('Название товара обязательно.', $validator->errors()->first('title'));
     }
 
     public function test_it_fails_if_description_is_too_long(): void
@@ -102,7 +102,7 @@ class StoreProductRequestTest extends TestCase
 
         $validator = $this->validate([
             'category_id' => $category->id,
-            'name'        => 'Футболка',
+            'title'        => 'Футболка',
             'description' => str_repeat('a', 2001) // Лимит 2000
         ]);
 

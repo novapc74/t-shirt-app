@@ -2,28 +2,20 @@
 
 namespace Tests\Unit\Requests;
 
-use App\Http\Requests\StorePriceTypeRequest;
-use App\Models\PriceType;
-use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Str;
 use Tests\TestCase;
+use App\Models\PriceType;
+use Illuminate\Support\Facades\Validator;
+use App\Http\Requests\StorePriceTypeRequest;
+use PHPUnit\Framework\Attributes\DataProvider;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Validation\Validator as ValidationValidator;
 
 class StorePriceTypeRequestTest extends TestCase
 {
     use RefreshDatabase;
 
-    /**
-     * Эмуляция работы FormRequest
-     */
     protected function validate(array $data): ValidationValidator
     {
-        // Имитируем prepareForValidation
-        if (!empty($data['name']) && empty($data['slug'])) {
-            $data['slug'] = Str::slug($data['name']);
-        }
-
         $request = new StorePriceTypeRequest();
         return Validator::make(
             $data,
@@ -33,50 +25,71 @@ class StorePriceTypeRequestTest extends TestCase
         );
     }
 
+    /**
+     * Успешная валидация корректных данных.
+     */
     public function test_it_passes_with_valid_data(): void
     {
         $validator = $this->validate([
-            'name' => 'Оптовая цена',
-            'slug' => 'opt-price'
+            'title' => 'Оптовая цена',
+            'priority' => 10
         ]);
 
         $this->assertTrue($validator->passes());
     }
 
-    public function test_it_automatically_generates_slug_if_missing(): void
+    /**
+     * Ошибка, если название не уникально.
+     */
+    public function test_it_fails_if_title_is_not_unique(): void
     {
-        $validator = $this->validate([
-            'name' => 'Розничная цена'
-        ]);
-
-        $this->assertTrue($validator->passes());
-        $this->assertEquals('roznicnaia-cena', $validator->getData()['slug']);
-    }
-
-    public function test_it_fails_if_name_is_not_unique(): void
-    {
-        PriceType::factory()->create(['name' => 'VIP']);
+        // Создаем существующий тип цены
+        PriceType::create(['title' => 'VIP', 'slug' => 'vip']);
 
         $validator = $this->validate([
-            'name' => 'VIP'
+            'title' => 'VIP'
         ]);
 
         $this->assertFalse($validator->passes());
-        $this->assertArrayHasKey('name', $validator->errors()->toArray());
+        $this->assertEquals(
+            'Тип цены с таким названием уже существует',
+            $validator->errors()->first('title')
+        );
     }
 
-    public function test_it_fails_if_slug_is_not_unique(): void
+    /**
+     * Ошибка, если название отсутствует или слишком длинное.
+     */
+    public function test_it_fails_on_invalid_title(): void
     {
-        PriceType::factory()->create([
-            'name' => 'Test'
-        ]);
+        // Пустое название
+        $this->assertFalse($this->validate(['title' => ''])->passes());
 
+        // Слишком длинное
+        $this->assertFalse($this->validate(['title' => str_repeat('a', 256)])->passes());
+    }
+
+    /**
+     * Ошибка при неверном приоритете.
+     */
+    #[DataProvider('invalidPriorityProvider')]
+    public function test_it_fails_on_invalid_priority($priority, $expectedError): void
+    {
         $validator = $this->validate([
-            'name' => 'Another Name',
-            'slug' => 'test'
+            'title' => 'Цена',
+            'priority' => $priority
         ]);
 
         $this->assertFalse($validator->passes());
-        $this->assertArrayHasKey('slug', $validator->errors()->toArray());
+        $this->assertStringContainsString($expectedError, $validator->errors()->first('priority'));
+    }
+
+    public static function invalidPriorityProvider(): array
+    {
+        return [
+            'меньше 1' => [0, 'в интервале от 1 до 100'],
+            'больше 100' => [101, 'в интервале от 1 до 100'],
+            'не число' => ['abc', 'целым числом'],
+        ];
     }
 }
