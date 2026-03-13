@@ -38,6 +38,7 @@ class CatalogService
 
         // 2. Итоговые ID вариантов для списка товаров (логика AND между группами)
         $variantIds = $this->filterService->getMatchedVariantIds($dto);
+
         $vIdsRaw = '{' . implode(',', $variantIds ?: []) . '}';
 
         // 3. Подготовка данных для "умных счетчиков" (логика OR внутри группы)
