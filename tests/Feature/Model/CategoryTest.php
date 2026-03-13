@@ -15,9 +15,9 @@ class CategoryTest extends TestCase
     /**
      * TEST 1 - тестируем создание слага.
      */
-    public function testGenerateSlugFromCategoryName(): void
+    public function testGenerateSlugFromCategoryTitle(): void
     {
-        $category = Category::create(['name' => 'Мужские футболки']);
+        $category = Category::create(['title' => 'Мужские футболки']);
 
         $this->assertEquals('muzskie-futbolki', $category->slug);
     }
@@ -27,13 +27,13 @@ class CategoryTest extends TestCase
      */
     public function testCategoryDoesNotChangeSlugOnUpdate(): void
     {
-        $category = Category::create(['name' => 'Старое имя']);
+        $category = Category::create(['title' => 'Старое имя']);
         $originalSlug = $category->slug;
 
-        $category->update(['name' => 'Новое имя']);
+        $category->update(['title' => 'Новое имя']);
 
         // Проверяем, что имя изменилось, а слаг остался прежним для SEO
-        $this->assertEquals('Новое имя', $category->name);
+        $this->assertEquals('Новое имя', $category->title);
         $this->assertEquals($originalSlug, $category->slug);
     }
 
@@ -103,13 +103,13 @@ class CategoryTest extends TestCase
     /**
      * TEST 6 - проверка уникальности слага категории.
      */
-    public function test_it_generates_unique_slugs_for_same_names()
+    public function test_it_generates_unique_slugs_for_same_titles()
     {
         $categoryOne = Category::factory()->create([
-            'name' => 'Дубль',
+            'title' => 'Дубль',
         ]);
         $categoryTwo = Category::factory()->create([
-            'name' => 'Дубль',
+            'title' => 'Дубль',
         ]);
 
         $this->assertEquals('dubl', $categoryOne->slug);

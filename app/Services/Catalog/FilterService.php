@@ -48,6 +48,7 @@ class FilterService
         // Оборачиваем каждый подзапрос в скобки
         $intersectChain = array_map(fn($sql) => "($sql)", array_values($selectParts));
 
+
         // Используем оператор & для пересечения всех полученных векторов
         $finalSql = "SELECT (".implode(' & ', $intersectChain).") as matched";
 
@@ -57,7 +58,8 @@ class FilterService
             return [];
         }
 
-        // Преобразуем строку Postgres {1,2,3} в массив PHP [1,2,3]
-        return str_getcsv(trim($result->matched, '{}'));
+        $trimmed = trim($result->matched, '{}'); // Убираем скобки {}
+
+        return $trimmed === '' ? []: str_getcsv($trimmed); // Преобразуем "1,2,3" в [1,2,3]
     }
 }

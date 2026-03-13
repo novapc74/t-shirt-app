@@ -2,162 +2,130 @@
 
 namespace Tests\Unit\Services;
 
-use App\Models\{Brand, Category, Color, Gender, Price, PriceType, Product, ProductVariant, Property, PropertyValue, Size, Stock, Warehouse};
 use App\Services\Catalog\DTO\CatalogFilterRequestDto;
+use DB;
+use Mockery;
+use Tests\TestCase;
 use App\Services\Catalog\FilterService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Artisan;
-use Tests\TestCase;
 
 class FilterServiceTest extends TestCase
 {
-    use RefreshDatabase; // Очищает БД перед каждым тестом
+    use RefreshDatabase;
 
-    protected FilterService $service;
+    private FilterService $service;
 
     protected function setUp(): void
     {
         parent::setUp();
         $this->service = new FilterService();
 
-        // Наполняем базу минимальным набором данных для тестов
-        $this->seedBasicData();
+        // Включаем расширение, если его нет (нужны права superuser в тестовой БД)
+        DB::statement('CREATE EXTENSION IF NOT EXISTS intarray');
+
+        $this->seedFilterVectors();
     }
 
-    /**
-     * Тест: Фильтрация по цвету (Системный ID 1001)
-     */
-    public function test_it_filters_by_color_using_system_id(): void
+    private function seedFilterVectors(): void
     {
-        $colorId = Color::where('slug', 'sinii')->first()->id;
-        $categoryId = Category::where('slug', 'odezhda')->first()->id;
+        // Наличие: варианты 1, 2, 3, 4, 5 в стоке
+        DB::table('filter_vectors')->insert([
+            'entity_type' => 'system',
+            'entity_id' => 1,
+            'variant_ids' => '{1,2,3,4,5}',
+        ]);
 
-        $params = new CatalogFilterRequestDto(
-            filters: ['color' => [$colorId]]
-        );
+        // Бренды: Brand 10 (варианты 1, 2), Brand 11 (варианты 3, 4)
+        DB::table('filter_vectors')->insert([
+            ['entity_type' => 'brand', 'entity_id' => 10, 'variant_ids' => '{1,2}'],
+            ['entity_type' => 'brand', 'entity_id' => 11, 'variant_ids' => '{3,4}'],
+        ]);
 
-        $productIds = $this->service->getFilteredProductIds($params, $categoryId);
+        // Цвета: Color 20 (варианты 1, 3)
+        DB::table('filter_vectors')->insert([
+            'entity_type' => 'color',
+            'entity_id' => 20,
+            'variant_ids' => '{1,3}',
+        ]);
 
-        $this->assertContains(
-            Product::where('slug', 'blue-tshirt')->first()->id,
-            $productIds
-        );
+        // Цены:
+        // вариант 1 = 1000 руб, вариант 2 = 2000 руб,
+        // вариант 3 = 3000 руб, вариант 4 = 4000 руб
+        DB::table('filter_vectors')->insert([
+            ['entity_type' => 'price_range', 'entity_id' => 1000, 'variant_ids' => '{1}'],
+            ['entity_type' => 'price_range', 'entity_id' => 2000, 'variant_ids' => '{2}'],
+            ['entity_type' => 'price_range', 'entity_id' => 3000, 'variant_ids' => '{3}'],
+            ['entity_type' => 'price_range', 'entity_id' => 4000, 'variant_ids' => '{4}'],
+        ]);
     }
 
-    /**
-     * Тест: Скрытие товаров с нулевым остатком
-     */
-    public function test_it_hides_products_with_zero_stock(): void
+    public function test_it_filters_by_brand_and_color(): void
     {
-        $redColorId = Color::where('slug', 'krasnyi')->first()->id;
-        $categoryId = Category::where('slug', 'odezhda')->first()->id;
+        // Выбираем бренд 10 (1,2) И цвет 20 (1,3) -> Должен остаться только 1
+        $dto = new CatalogFilterRequestDto(filters: [
+            'brand' => [10],
+            'color' => [20],
+        ]);
 
-        // Красная футболка имеет stock = 0
-        $params = new CatalogFilterRequestDto(
-            filters: ['color' => [$redColorId]]
-        );
+        $result = $this->service->getMatchedVariantIds($dto);
 
-        $productIds = $this->service->getFilteredProductIds($params, $categoryId);
-
-        // Должно быть 0 результатов, так как stock > 0
-        $this->assertEmpty($productIds);
+        $this->assertEquals([1], array_map('intval', $result));
     }
 
-    /**
-     * Тест: Фильтрация по диапазону цен
-     */
     public function test_it_filters_by_price_range(): void
     {
-        $categoryId = Category::where('slug', 'odezhda')->first()->id;
+        // Цена от 2500 до 4500 -> Должны вернуться варианты 3 и 4
+        $dto = new CatalogFilterRequestDto(filters: [
+            'price' => ['min' => 2500, 'max' => 4500],
+        ]);
 
-        $params = new CatalogFilterRequestDto(
-            minPrice: 1000,
-            maxPrice: 2500
-        );
+        $result = $this->service->getMatchedVariantIds($dto);
 
-        $productIds = $this->service->getFilteredProductIds($params, $categoryId);
-
-        $this->assertNotEmpty($productIds);
-        $this->assertContains(
-            Product::where('slug', 'blue-tshirt')->first()->id,
-            $productIds
-        );
+        $this->assertCount(2, $result);
+        $this->assertContains(3, array_map('intval', $result));
+        $this->assertContains(4, array_map('intval', $result));
     }
 
-    /**
-     * Тест: Фильтрация по гендеру (Системный ID 1003)
-     */
-    public function test_it_filters_by_gender_using_system_id(): void
+    public function test_it_excludes_type_for_smart_counters(): void
     {
-        $genderId = Gender::where('slug', 'muzhskoi')->first()->id;
-        $categoryId = Category::where('slug', 'odezhda')->first()->id;
+        // Если мы фильтруем по Brand 10 (1,2), но исключаем 'brand' (для счетчиков)
+        // То должны вернуться все варианты, подходящие под остальные фильтры (здесь только сток)
+        $dto = new CatalogFilterRequestDto(filters: [
+            'brand' => [10],
+        ]);
 
-        $params = new CatalogFilterRequestDto(
-            filters: ['gender' => [$genderId]]
-        );
+        $result = $this->service->getMatchedVariantIds($dto, excludeType: 'brand');
 
-        $productIds = $this->service->getFilteredProductIds($params, $categoryId);
-
-        $this->assertCount(1, $productIds);
-        $this->assertEquals(
-            Product::where('slug', 'blue-tshirt')->first()->id,
-            $productIds[0]
-        );
+        // Вернутся все из system:1 {1,2,3,4,5}
+        $this->assertCount(5, $result);
     }
 
-    /**
-     * Наполнение тестовыми данными
-     */
-    private function seedBasicData(): void
+    public function test_it_returns_empty_array_when_no_matches(): void
     {
-        // 1. Справочники
-        $brand = Brand::create(['title' => 'Rice Style', 'slug' => 'rice-style', 'priority' => 0]);
-        $cat = Category::create(['title' => 'Одежда', 'slug' => 'odezhda', 'priority' => 0]);
-        $priceType = PriceType::create(['title' => 'retail']);
-        $warehouse = Warehouse::create(['title' => 'Склад', 'slug' => 'sklad', 'address' => 'Адрес', 'priority' => 0]);
-
-        // 2. Атрибуты
-        $blue = Color::create(['title' => 'Синий', 'slug' => 'sinii', 'hex_code' => '#0000FF', 'priority' => 1]);
-        $red = Color::create(['title' => 'Красный', 'slug' => 'krasnyi', 'hex_code' => '#FF0000', 'priority' => 2]);
-        $sizeL = Size::create(['title' => 'L', 'slug' => 'l', 'priority' => 10]);
-        $sizeS = Size::create(['title' => 'S', 'slug' => 's', 'priority' => 5]);
-        $male = Gender::create(['title' => 'Мужской', 'slug' => 'muzhskoi', 'priority' => 1]);
-        $female = Gender::create(['title' => 'Женский', 'slug' => 'zhenskii', 'priority' => 2]);
-
-        // 3. Свойство Материал
-        $materialProp = Property::create(['title' => 'Материал', 'slug' => 'material']);
-        $cotton = PropertyValue::create(['property_id' => $materialProp->id, 'value' => 'Хлопок', 'slug' => 'cotton']);
-
-        // ТОВАР 1: СИНЯЯ МУЖСКАЯ ФУТБОЛКА (В наличии, 2000 руб)
-        $p1 = Product::create([
-            'title' => 'Синяя футболка', 'slug' => 'blue-tshirt',
-            'category_id' => $cat->id, 'brand_id' => $brand->id, 'is_active' => true, 'description' => '...'
-        ]);
-        $p1->propertyValues()->attach($cotton->id);
-
-        $v1 = ProductVariant::create([
-            'product_id' => $p1->id, 'color_id' => $blue->id, 'size_id' => $sizeL->id,
-            'gender_id' => $male->id, 'sku' => 'BLUE-L-MALE', 'is_default' => true
+        $dto = new CatalogFilterRequestDto([
+            'brand' => [10],
+            'price' => [
+                'min' => 4000,
+                'max' => 4000,
+            ],
         ]);
 
-        $v1->stocks()->create(['warehouse_id' => $warehouse->id, 'quantity' => 10]);
-        $v1->prices()->create(['price_type_id' => $priceType->id, 'price' => 2000]);
+        $this->assertEmpty($this->service->getMatchedVariantIds($dto));
+    }
 
-        // ТОВАР 2: КРАСНЫЙ ЖЕНСКИЙ ХУДИ (Нет в наличии, 5000 руб)
-        $p2 = Product::create([
-            'title' => 'Красный худи', 'slug' => 'red-hoodie',
-            'category_id' => $cat->id, 'brand_id' => $brand->id, 'is_active' => true, 'description' => '...'
+    public function test_mock_it_returns_empty_array_when_no_matches(): void
+    {
+        // Создаем мок и сразу описываем все ожидания цепочкой методов
+        $dto = Mockery::mock(CatalogFilterRequestDto::class);
+        $dto->allows([
+            'getFilters'     => ['brand' => [10]],
+            'hasPriceFilter' => true,
+            'getMinPrice'    => '4000',
+            'getMaxPrice'    => '4000',
         ]);
 
-        $v2 = ProductVariant::create([
-            'product_id' => $p2->id, 'color_id' => $red->id, 'size_id' => $sizeS->id,
-            'gender_id' => $female->id, 'sku' => 'RED-S-FEMALE', 'is_default' => true
-        ]);
+        $result = $this->service->getMatchedVariantIds($dto);
 
-        $v2->stocks()->create(['warehouse_id' => $warehouse->id, 'quantity' => 0]);
-        $v2->prices()->create(['price_type_id' => $priceType->id, 'price' => 5000]);
-
-        // 4. Запуск индексации
-        Artisan::call('shop:reindex');
+        $this->assertEmpty($result);
     }
 }
