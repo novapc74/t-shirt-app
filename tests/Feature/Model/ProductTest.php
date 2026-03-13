@@ -20,7 +20,7 @@ class ProductTest extends TestCase
         $category = Category::factory()->create();
 
         $product = Product::factory()->create([
-            'name' => 'Test Product',
+            'title' => 'Test Product',
             'category_id' => $category->id,
         ]);
 
@@ -34,31 +34,31 @@ class ProductTest extends TestCase
     {
         $category = Category::factory()->create();
         $product = Product::factory()->create([
-            'name' => 'Старое имя',
+            'title' => 'Старое имя',
             'category_id' => $category->id,
         ]);
         $originalSlug = $product->slug;
 
-        $product->update(['name' => 'Новое имя']);
+        $product->update(['title' => 'Новое имя']);
 
         // Проверяем, что имя изменилось, а слаг остался прежним для SEO
-        $this->assertEquals('Новое имя', $product->name);
+        $this->assertEquals('Новое имя', $product->title);
         $this->assertEquals($product->slug, $originalSlug);
     }
 
     /**
      * TEST 3 - проверка уникальности слага товара.
      */
-    public function test_it_generates_unique_slugs_for_same_names()
+    public function test_it_generates_unique_slugs_for_same_titles()
     {
         $category = Category::factory()->create();
 
         $productOne = Product::factory()->create([
-            'name' => 'Дубль',
+            'title' => 'Дубль',
             'category_id' => $category->id,
         ]);
         $productTwo = Product::factory()->create([
-            'name' => 'Дубль',
+            'title' => 'Дубль',
             'category_id' => $category->id,
         ]);
 
@@ -96,7 +96,7 @@ class ProductTest extends TestCase
     public function test_it_can_be_resolved_by_slug()
     {
         $product = Product::factory()->create([
-            'name' => 'Find Me'
+            'title' => 'Find Me'
         ]);
 
         $found = Product::where('slug', 'find-me')->first();

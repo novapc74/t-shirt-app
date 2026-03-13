@@ -1,11 +1,11 @@
 <?php
 
-namespace Feature\Database;
+namespace Tests\Feature\Database;
 
 use App\Models\Category;
-use App\Models\Product;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class DatabaseTriggerTest extends TestCase
@@ -13,64 +13,61 @@ class DatabaseTriggerTest extends TestCase
     use RefreshDatabase;
 
     /**
-     * ТЕСТ 1: Триггер запрещает товары там, где уже есть подкатегории.
+     * ТЕСТ 1: Триггер БД запрещает вставку товара в категорию, у которой есть подкатегории.
      */
-    public function test_trigger_prevents_adding_product_to_parent_category(): void
+    public function test_trigger_prevents_adding_product_to_parent_category_via_sql(): void
     {
-        $parent = Category::factory()->create(['name' => 'Одежда']);
-        Category::factory()->create([
-            'name' => 'Футболки',
-            'slug' => 'test',
-            'parent_id' => $parent->id
-        ]);
+        // Создаем структуру через Eloquent (для удобства)
+        $parent = Category::create(['title' => 'Одежда', 'slug' => 'odezhda']);
+        Category::create(['title' => 'Футболки', 'slug' => 't-shirts', 'parent_id' => $parent->id]);
 
+        // Ожидаем исключение от БД
         $this->expectException(QueryException::class);
-        $this->expectExceptionMessage('Нельзя добавить товар: у категории есть подкатегории');
+        $this->expectExceptionMessage('Нельзя добавить товар в эту категорию: она имеет подкатегории');
 
-        Product::withoutEvents(function () use ($parent) {
-            $product = Product::factory()->make([
-                'category_id' => $parent->id,
-            ]);
-            $product->save();
-        });
+        // Выполняем прямой SQL запрос в обход всех моделей
+        DB::statement("
+            INSERT INTO products (category_id, title, slug, created_at, updated_at)
+            VALUES (?, 'Тестовый товар', 'test-slug', NOW(), NOW())
+        ", [$parent->id]);
     }
 
     /**
-     * ТЕСТ 2: Триггер запрещает подкатегорию там, где уже есть товары.
+     * ТЕСТ 2: Триггер БД запрещает создание подкатегории в категории, где уже есть товары.
      */
-    public function test_trigger_prevents_adding_subcategory_to_category_with_products(): void
+    public function test_trigger_prevents_adding_subcategory_to_category_with_products_via_sql(): void
     {
-        $category = Category::factory()->create(['name' => 'Листовая категория']);
-        Product::factory()->create([
-            'category_id' => $category->id,
-        ]);
+        $category = Category::create(['title' => 'Листовая категория', 'slug' => 'leaf']);
+
+        // Добавляем товар
+        DB::statement("
+            INSERT INTO products (category_id, title, slug, created_at, updated_at)
+            VALUES (?, 'Товар в листе', 'item-leaf', NOW(), NOW())
+        ", [$category->id]);
 
         $this->expectException(QueryException::class);
-        $this->expectExceptionMessage('Нельзя создать подкатегорию: в родительской категории уже есть товары');
+        $this->expectExceptionMessage('Нельзя создать подкатегорию: родительская категория уже содержит товары');
 
-        Category::withoutEvents(function () use ($category) {
-            $subCategory = Category::factory()->make(['parent_id' => $category->id]);
-            $subCategory->save();
-        });
+        // Пытаемся создать подкатегорию через SQL
+        DB::statement("
+            INSERT INTO categories (parent_id, title, slug, created_at, updated_at)
+            VALUES (?, 'Подкатегория', 'sub-slug', NOW(), NOW())
+        ", [$category->id]);
     }
 
     /**
-     * ТЕСТ 3: Триггер НЕ мешает нормальной работе (у категории нет дочерних элементов).
+     * ТЕСТ 3: Проверка, что триггер не блокирует валидные операции.
      */
-    public function test_trigger_allows_valid_operations(): void
+    public function test_trigger_allows_valid_sql_insert(): void
     {
-        $parent = Category::factory()->create();
-        $child = Category::factory()->create(['parent_id' => $parent->id]);
+        $category = Category::create(['title' => 'Чистый лист', 'slug' => 'clean-leaf']);
 
-        Product::withoutEvents(function () use ($child) {
-            $product = Product::factory()->make([
-                'category_id' => $child->id,
-                'name' => 'Test Product',
-                'slug' => 'test-product',
-            ]);
-            $this->assertTrue($product->save());
-        });
+        // Прямая вставка товара в пустую категорию должна пройти
+        DB::statement("
+            INSERT INTO products (category_id, title, slug, created_at, updated_at)
+            VALUES (?, 'Валидный товар', 'valid-p', NOW(), NOW())
+        ", [$category->id]);
 
-        $this->assertDatabaseCount('products', 1);
+        $this->assertDatabaseHas('products', ['slug' => 'valid-p']);
     }
 }
