@@ -89,22 +89,38 @@ class SyncFilterVectors extends Command
         );
     }
 
+    /**
+     * Наполняем таблицу по наличию цены и остатков
+     * @return void
+     */
     public function refreshSystemStockVector(): void
     {
-        $this->info("Обработка: system (наличие)...");
+        $this->info("Обработка: system (наличие цены + остатки)...");
+
         DB::statement(
             "
-            INSERT INTO filter_vectors (entity_type, entity_id, variant_ids)
-            SELECT
-                'system',
-                1,
-                COALESCE(uniq(sort(array_agg(DISTINCT product_variant_id)::int4[])), '{}'::int4[])
-            FROM prices
-            GROUP BY 1, 2
-            ON CONFLICT (entity_type, entity_id) DO UPDATE SET variant_ids = EXCLUDED.variant_ids
+        INSERT INTO filter_vectors (entity_type, entity_id, variant_ids)
+        SELECT
+            'system',
+            1,
+            COALESCE(
+                uniq(sort(array_agg(DISTINCT pv.id)::int4[])),
+                '{}'::int4[]
+            )
+        FROM product_variants pv
+        -- Проверяем наличие цены
+        INNER JOIN prices p ON p.product_variant_id = pv.id
+        -- Проверяем наличие остатков
+        INNER JOIN stocks s ON s.product_variant_id = pv.id
+        -- Условие: общая сумма остатков на всех складах > 0
+        WHERE s.quantity > 0
+        GROUP BY 1, 2
+        ON CONFLICT (entity_type, entity_id)
+        DO UPDATE SET variant_ids = EXCLUDED.variant_ids
         "
         );
     }
+
 
     private function syncPrices(): void
     {
