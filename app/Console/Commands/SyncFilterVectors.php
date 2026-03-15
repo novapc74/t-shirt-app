@@ -112,6 +112,8 @@ class SyncFilterVectors extends Command
         INNER JOIN prices p ON p.product_variant_id = pv.id
         -- Проверяем наличие остатков
         INNER JOIN stocks s ON s.product_variant_id = pv.id
+        -- Не учитываем остатки на отключенных складах
+        INNER JOIN warehouses w ON w.id = s.warehouse_id AND w.is_active = true
         -- Условие: общая сумма остатков на всех складах > 0
         WHERE s.quantity > 0
         GROUP BY 1, 2

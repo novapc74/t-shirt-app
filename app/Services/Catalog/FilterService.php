@@ -3,12 +3,12 @@
 namespace App\Services\Catalog;
 
 use App\Services\Catalog\DTO\CatalogFilterRequestDto;
-use App\Repositories\CatalogRepository\PgFilterRepository;
+use App\Repositories\CatalogRepository\FilterRepositoryInterface;
 
-readonly class FilterService
+class FilterService
 {
     public function __construct(
-        private PgFilterRepository $filterRepository,
+        private readonly FilterRepositoryInterface $filterRepository,
     )
     {
     }

@@ -6,17 +6,10 @@ use App\Http\Requests\CatalogFilterRequest;
 
 class CatalogFilterRequestDto
 {
-    private bool $isOrStrategy = true;
-
-    public function __construct(private readonly array $filters = [], private readonly int $page = 1)
-    {
-        $filterGroupCount = 0;
-        foreach ($this->filters as $key => $values) {
-            if ($key === 'price' || empty($values)) continue;
-            $filterGroupCount++;
-        }
-        // Стратегия OR (объединение), если выбрана только ОДНА категория (например, только Цвет)
-        $this->isOrStrategy = ($filterGroupCount <= 1);
+    public function __construct(
+        private readonly array $filters = [],
+        private readonly int $page = 1
+    ) {
     }
 
 
@@ -41,11 +34,6 @@ class CatalogFilterRequestDto
     public function getPage(): int
     {
         return $this->page;
-    }
-
-    public function isOrStrategy(): bool
-    {
-        return $this->isOrStrategy;
     }
 
     public function getFilters(string $key = null): array
