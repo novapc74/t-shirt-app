@@ -56,8 +56,12 @@ class ReferenceSeeder extends Seeder
         }
 
         // 3. Склады и цены
-        DB::table('warehouses')->updateOrInsert(['slug' => 'main-wh'],
-            ['title' => 'Главный склад', 'address' => 'ул. Пр, 101', 'priority' => 0]);
+        DB::table('warehouses')->updateOrInsert(['slug' => 'main-wh'], [
+            'title' => 'Главный склад',
+            'address' => 'ул. Пр, 101',
+            'priority' => 0,
+            'is_active' => true,
+        ]);
         DB::table('price_types')->updateOrInsert(['title' => 'retail'], ['title' => 'retail']);
 
         // 4. Свойства (из фиксированного списка)
