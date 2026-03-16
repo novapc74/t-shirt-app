@@ -6,6 +6,7 @@ use Mockery;
 use Tests\TestCase;
 use Mockery\MockInterface;
 use App\Services\Catalog\FilterService;
+use PHPUnit\Framework\Attributes\DataProvider;
 use App\Services\Catalog\DTO\CatalogFilterRequestDto;
 use App\Repositories\CatalogRepository\FilterRepositoryInterface;
 
@@ -17,90 +18,109 @@ class FilterServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-
-        // Создаем мок репозитория
         $this->repositoryMock = Mockery::mock(FilterRepositoryInterface::class);
-
-        // Внедряем мок в сервис
         $this->service = new FilterService($this->repositoryMock);
     }
 
-    public function test_it_passes_correct_data_to_repository_with_all_filters(): void
-    {
-        // 1. Подготовка DTO
-        $dto = Mockery::mock(CatalogFilterRequestDto::class);
-        $dto->shouldReceive('getFilters')->andReturn([
-            'brand' => [1, 2],
-            'color' => [10],
-            'price' => ['min' => 100, 'max' => 500],
-        ]);
-        $dto->shouldReceive('hasPriceFilter')->andReturn(true);
-        $dto->shouldReceive('getMinPrice')->andReturn('100');
-        $dto->shouldReceive('getMaxPrice')->andReturn('500');
+    #[DataProvider('filterDataProvider')]
+    public function test_get_matched_variant_ids_logic(
+        array $inputFilters,
+        ?string $excludeType,
+        array $expectedFilters,
+        array $expectedPriceRange
+    ): void {
+        $dto = new CatalogFilterRequestDto($inputFilters);
 
-        // 2. Ожидаем, что репозиторий получит 'brand' и 'color', но НЕ 'price' в первом аргументе
-        // А во втором аргументе получит корректный range
         $this->repositoryMock->shouldReceive('findMatchedVariantIds')->once()->with(
-                ['brand' => [1, 2], 'color' => [10]], // filters
-                ['min' => 100, 'max' => 500]           // priceRange
-            )->andReturn([1, 2, 3]);
+            $expectedFilters,
+            $expectedPriceRange
+        )->andReturn([1, 2, 3]);
 
-        $result = $this->service->getMatchedVariantIds($dto);
+        $result = $this->service->getMatchedVariantIds($dto, $excludeType);
 
         $this->assertEquals([1, 2, 3], $result);
     }
 
-    public function test_it_excludes_specific_type_for_smart_counters(): void
+    public static function filterDataProvider(): array
     {
-        $dto = new CatalogFilterRequestDto(filters: [
-            'brand' => [10],
-            'color' => [20],
-        ]);
-
-        $this->repositoryMock->shouldReceive('findMatchedVariantIds')
-            ->once()
-            ->with(['color' => [20]], []) // 'brand' должен быть исключен
-            ->andReturn([1, 2]);
-
-        $result = $this->service->getMatchedVariantIds($dto, 'brand');
-
-        // ДОБАВЛЯЕМ ПРОВЕРКУ
-        $this->assertEquals([1, 2], $result);
+        return [
+            'все фильтры активны' => [
+                // Аргументы строго по порядку метода теста
+                ['brand' => [1, 2], 'color' => [10], 'price' => ['min' => 100, 'max' => 500]], // $input
+                null,                                                                         // $excludeType
+                ['brand' => [1, 2], 'color' => [10]],                                         // $expectedFilters
+                ['min' => 100, 'max' => 500],                                                 // $expectedPrice
+            ],
+            'исключение типа для счетчиков' => [
+                ['brand' => [1, 2], 'color' => [10]],
+                'brand',
+                ['color' => [10]],
+                [],
+            ],
+            'игнорирование цены при исключении цены' => [
+                ['brand' => [1, 2], 'price' => ['min' => 100, 'max' => 500,],],
+                'price',
+                ['brand' => [1, 2]],
+                [],
+            ],
+            'пустые фильтры' => [
+                [],
+                null,
+                [],
+                [],
+            ],
+            'только минимальная цена (дефолт макс)' => [
+                ['price' => ['min' => 500, 'max' => null]],
+                null,
+                [],
+                ['min' => 500, 'max' => 100000000],
+            ],
+            'только максимальная цена (дефолт мин)' => [
+                ['price' => ['min' => null, 'max' => 800]],
+                null,
+                [],
+                ['min' => 0, 'max' => 800],
+            ],
+        ];
     }
 
-    public function test_it_ignores_price_when_exclude_type_is_price(): void
-    {
-        $dto = new CatalogFilterRequestDto(filters: [
-            'brand' => [10],
-            'price' => ['min' => 100, 'max' => 500]
-        ]);
+    #[DataProvider('priceExclusionProvider')]
+    public function test_it_correctly_handles_price_exclusion_logic(
+        array $inputFilters,
+        ?string $excludeType,
+        array $expectedPriceRange
+    ): void {
+        // 1. Создаем реальный DTO с данными
+        $dto = new CatalogFilterRequestDto($inputFilters);
 
+        // 2. Настраиваем ожидание для репозитория
+        // Мы проверяем именно второй аргумент ($priceRange)
         $this->repositoryMock->shouldReceive('findMatchedVariantIds')
             ->once()
-            ->with(['brand' => [10]], []) // цена должна уйти пустой
-            ->andReturn([1]);
-
-        $result = $this->service->getMatchedVariantIds($dto, 'price');
-
-        // ДОБАВЛЯЕМ ПРОВЕРКУ
-        $this->assertCount(1, $result);
-    }
-
-    public function test_it_uses_empty_price_range_when_no_price_is_provided(): void
-    {
-        // Ситуация: фильтров цены нет вообще
-        $dto = new CatalogFilterRequestDto(filters: []);
-
-        $this->repositoryMock->shouldReceive('findMatchedVariantIds')
-            ->once()
-            ->with([], []) // Ожидаем пустые фильтры и пустой диапазон
+            ->with(Mockery::any(), $expectedPriceRange)
             ->andReturn([]);
 
-        $result = $this->service->getMatchedVariantIds($dto);
+        // 3. Вызываем сервис
+        $this->service->getMatchedVariantIds($dto, $excludeType);
 
-        $this->assertIsArray($result);
+        $this->assertTrue(true); // Для PHPUnit, так как проверка в shouldReceive
     }
 
+    public static function priceExclusionProvider(): array
+    {
+        return [
+            'цена активна (не исключаем)' => [
+                ['brand' => [1, 2], 'price' => ['min' => 100, 'max' => 500]], // $inputFilters
+                null,                                                        // $excludeType
+                ['min' => 100, 'max' => 500],                                // $expectedPriceRange
+            ],
+            'цена исключена (для счетчиков цены)' => [
+                ['brand' => [1, 2], 'price' => ['min' => 100, 'max' => 500]], // $inputFilters
+                'price',                                                     // $excludeType
+                [],                                                          // $expectedPriceRange
+            ],
+        ];
+    }
 
     protected function tearDown(): void
     {

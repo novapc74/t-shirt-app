@@ -8,7 +8,7 @@ class CatalogFilterRequestDto
 {
     public function __construct(
         private readonly array $filters = [],
-        private readonly int $page = 1
+        private readonly int $page = 1,
     ) {
     }
 
@@ -16,19 +16,19 @@ class CatalogFilterRequestDto
     public static function fromRequest(CatalogFilterRequest $request, array $allowedKeys = []): self
     {
         $data = $request->validated();
+        $inputFilters = $data['filters'] ?? [];
 
-        $filters = $data['filters'] ?? [];
-        $currentPage = (int)($data['page'] ?? 1);
+        // 1. Создаем маску разрешенных ключей
+        $allowedMask = array_fill_keys($allowedKeys, true);
+        $allowedMask['price'] = true;
 
-        $allowedKeys[] = 'price';
+        // 2. Оставляем только разрешенные фильтры
+        $filtered = array_intersect_key($inputFilters, $allowedMask);
 
-        $filtered = array_filter(
-            $filters,
-            fn($key) => in_array($key, $allowedKeys),
-            ARRAY_FILTER_USE_KEY
-        );
+        // 3. Берем страницу из корня валидированных данных, а не из отфильтрованных ключей
+        $page = isset($data['page']) ? (int)$data['page'] : 1;
 
-        return new self($filtered, $currentPage);
+        return new self($filtered, $page);
     }
 
     public function getPage(): int

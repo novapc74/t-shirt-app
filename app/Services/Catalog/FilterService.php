@@ -13,18 +13,19 @@ class FilterService
     {
     }
 
-    public function getMatchedVariantIds(CatalogFilterRequestDto $params, ?string $excludeType = null): array
+    public function getMatchedVariantIds(CatalogFilterRequestDto $dto, ?string $excludeType = null): array
     {
-        $filters = collect($params->getFilters())
+        $filters = collect($dto->getFilters())
             ->except([$excludeType, 'price'])
             ->filter()
             ->toArray();
 
         $priceRange = [];
-        if ($params->hasPriceFilter() && $excludeType !== 'price') {
+
+        if ($dto->hasPriceFilter() && $excludeType !== 'price') {
             $priceRange = [
-                'min' => (int)($params->getMinPrice() ?? 0),
-                'max' => (int)($params->getMaxPrice() ?? 100000000),
+                'min' => (int)($dto->getMinPrice() ?? 0),
+                'max' => (int)($dto->getMaxPrice() ?? 100000000),
             ];
         }
 
