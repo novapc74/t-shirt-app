@@ -29,6 +29,14 @@ command-test:
 test:
 	./vendor/bin/sail test
 
+test-report:
+	XDEBUG_MODE=coverage ./vendor/bin/sail php -d memory_limit=1G ./vendor/bin/phpunit --coverage-html test_coverage_report --stderr
+
+# Полная детальная таблица по всем файлам
+test-coverage:
+	XDEBUG_MODE=coverage ./vendor/bin/sail php -d memory_limit=1G ./vendor/bin/phpunit --coverage-text
+
+
 test-name:
 	./vendor/bin/sail test --filter $(name)
 
