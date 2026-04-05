@@ -8,7 +8,7 @@ use App\Http\Requests\CatalogFilterRequest;
 
 class ProductController extends Controller
 {
-    public function __construct(protected CatalogService $catalogService)
+    public function __construct(private readonly CatalogService $catalogService)
     {
     }
 

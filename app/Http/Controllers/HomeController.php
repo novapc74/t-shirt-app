@@ -2,21 +2,21 @@
 
 namespace App\Http\Controllers;
 
+use Inertia\Inertia;
+use Inertia\Response;
 use App\Models\Category;
 use Illuminate\Support\Facades\Cache;
-use Inertia\Inertia;
+
 class HomeController extends Controller
 {
-    public function index()
+    public function index(): Response
     {
-        // Кэшируем дерево категорий на 1 час
         $categoriesTree = Cache::remember('home_categories_tree', 3600, function () {
-            return Category::whereNull('parent_id') // Берем только корневые
+            return Category::whereNull('parent_id')
             ->with(['childrenRecursive' => function($query) {
-                // Подсчитываем количество вариантов для каждой категории в дереве
                 $query->withCount(['variants as variants_count']);
             }])
-                ->withCount(['variants as variants_count']) // И для корня тоже
+                ->withCount(['variants as variants_count'])
                 ->orderBy('priority')
                 ->get();
         });
