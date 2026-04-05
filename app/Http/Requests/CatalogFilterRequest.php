@@ -37,24 +37,25 @@ class CatalogFilterRequest extends FormRequest
             'page' => ['nullable', 'integer', 'min:1'],
             'filters' => ['nullable', 'array'],
             'filters.price.min' => ['nullable', 'numeric', 'min:0'],
-            'filters.price.max' => [
-                'nullable',
-                'numeric',
-                'gte:filters.price.min'
-            ],
-            'filters.*' => ['sometimes', 'array'],
-            'filters.*.*' => [
+            'filters.price.max' => ['nullable', 'numeric', 'gte:filters.price.min'],
+            'filters.*' => [
                 'sometimes',
+                'array',
                 function ($attribute, $value, $fail) {
-                    if (str_contains($attribute, 'filters.price')) return;
-                    if (!is_numeric($value) || $value < 1) {
-                        $fail("Значение $attribute должно быть числом больше 0.");
+                    if ($attribute === 'filters.price' || !is_array($value)) {
+                        return;
                     }
-                }
+
+                    foreach ($value as $id) {
+                        if (!is_numeric($id) || (int)$id < 1) {
+                            $fail("Фильтр содержит некорректный ID.");
+                            break;
+                        }
+                    }
+                },
             ],
         ];
     }
-
 
     protected function failedValidation(Validator $validator)
     {
@@ -65,7 +66,7 @@ class CatalogFilterRequest extends FormRequest
 
         // Для Postman и прочих отдаем JSON
         throw new ValidationException($validator, response()->json([
-            'errors' => $validator->errors()
+            'errors' => $validator->errors(),
         ], 422));
     }
 }

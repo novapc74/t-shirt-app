@@ -2,8 +2,10 @@
 
 namespace Tests\Unit\Requests;
 
+use Generator;
 use Tests\TestCase;
-use Illuminate\Routing\Redirector;
+use ReflectionClass;
+use ReflectionException;
 use Illuminate\Support\Facades\Validator;
 use App\Http\Requests\CatalogFilterRequest;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -42,6 +44,8 @@ class CatalogFilterRequestTest extends TestCase
 
     /**
      * Тест трансформации цены в prepareForValidation
+     *
+     * @throws ReflectionException
      */
     public function test_prepare_for_validation_merges_price_correctly(): void
     {
@@ -54,12 +58,9 @@ class CatalogFilterRequestTest extends TestCase
 
         $request = new CatalogFilterRequest($data);
 
-        // В Laravel prepareForValidation вызывается автоматически перед валидацией
-        // Мы можем вызвать его через Reflection или просто проверить результат через merge логику
-        $request->setContainer(app())
-            ->setRedirector(app(Redirector::class));
-
-        $request->validateResolved();
+        $reflection = new ReflectionClass(CatalogFilterRequest::class);
+        $method = $reflection->getMethod('prepareForValidation');
+        $method->invoke($request);
 
         $price = $request->input('filters.price');
 
@@ -68,65 +69,82 @@ class CatalogFilterRequestTest extends TestCase
         $this->assertIsFloat($price['min']);
     }
 
-    // --- Data Providers ---
-    public static function validDataProvider(): array
+    public static function validDataProvider(): Generator
     {
-        return [
-            'полный корректный запрос' => [
-                [
-                    'page' => 1,
-                    'filters' => [
-                        'price' => ['min' => 10, 'max' => 100],
-                        'color' => [1, 5, 10],
-                        'brand' => [2],
+        yield 'полный корректный запрос' => [
+            [
+                'page' => 1,
+                'filters' => [
+                    'price' => [
+                        'min' => 10,
+                        'max' => 100,
+                    ],
+                    'color' => [
+                        1,
+                        5,
+                        10,
+                    ],
+                    'brand' => [
+                        2,
                     ],
                 ],
             ],
-            'минимальный запрос' => [['page' => 2]],
-            'цена только с min' => [
-                [
-                    'filters' => ['price' => ['min' => 50]],
+        ];
+        yield 'минимальный запрос' => [
+            [
+                'page' => 2,
+            ],
+        ];
+        yield 'цена только с min' => [
+            [
+                'filters' => [
+                    'price' => [
+                        'min' => 50,
+                    ],
                 ],
             ],
         ];
     }
 
-    public static function invalidDataProvider(): array
+    public static function invalidDataProvider(): \Generator
     {
-        return [
-            'отрицательная страница' => [
-                [
-                    'page' => -1,
-                ],
-                'page',
+        yield 'отрицательная страница' => [
+            [
+                'page' => -1,
             ],
-            'max меньше min' => [
-                [
-                    'filters' => [
-                        'price' => [
-                            'min' => 100,
-                            'max' => 50,
-                        ],
-                    ],
+            'page',
+        ];
+        yield 'max меньше min' => [
+            [
+                'filters' => [
+                    'price' => ['min' => 100, 'max' => 50],
                 ],
-                'filters.price.max',
             ],
-            'не числовой ID в фильтрах' => [
-                [
-                    'filters' => [
-                        'color' => ['red', 1],
-                    ],
+            'filters.price.max',
+        ];
+        yield 'не числовой id в фильтрах' => [
+            [
+                'filters' => [
+                    'color' => ['red', 1],
                 ],
-                'filters.color.0',
             ],
-            'ID меньше единицы' => [
-                [
-                    'filters' => [
-                        'brand' => [0],
-                    ],
+            'filters.color',
+        ];
+        yield 'id меньше единицы' => [
+            [
+                'filters' => [
+                    'brand' => [0],
                 ],
-                'filters.brand.0',
             ],
+            'filters.brand',
+        ];
+        yield 'фильтр не массив' => [
+            [
+                'filters' => [
+                    'brand' => 123,
+                ],
+            ],
+            'filters.brand',
         ];
     }
 }
